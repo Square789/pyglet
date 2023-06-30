@@ -207,8 +207,8 @@ class OpenALSource(OpenALObject):
     cone_outer_angle = _float_source_property(al.AL_CONE_OUTER_ANGLE)
     cone_outer_gain = _float_source_property(al.AL_CONE_OUTER_GAIN)
     sec_offset = _float_source_property(al.AL_SEC_OFFSET)
-    sample_offset = _float_source_property(al.AL_SAMPLE_OFFSET)
-    byte_offset = _float_source_property(al.AL_BYTE_OFFSET)
+    sample_offset = _int_source_property(al.AL_SAMPLE_OFFSET)
+    byte_offset = _int_source_property(al.AL_BYTE_OFFSET)
 
     del _int_source_property
     del _float_source_property
