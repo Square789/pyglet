@@ -17,6 +17,14 @@ class PlayerWorkerThread(threading.Thread):
 
     _threads = set()
 
+    # A cross-thread lock that is set before a thread is started and released as soon as it
+    # added itself to `_threads`. Secures against the extremely unlikely, not-reproduced but
+    # probably technically possible case of a thread slipping through as it is unscheduled
+    # before it added itself to `_threads` in favor of the `atexit` callback, causing it to
+    # end up wait on the `_rest_event` forever, which is unclean and may become an actual
+    # problem if these are ever made non-daemonic.
+    _thread_set_lock = threading.Lock()
+
     # Time to wait if there are players, but they're all full:
     _nap_time = 0.05
 
@@ -29,11 +37,16 @@ class PlayerWorkerThread(threading.Thread):
         self._stopped = False
         self.players = set()
 
+    def start(self) -> None:
+        self._thread_set_lock.acquire()
+        super().start()
+
     def run(self):
         if pyglet.options['debug_trace']:
             pyglet._install_trace()
 
         self._threads.add(self)
+        self._thread_set_lock.release()
 
         sleep_time = None
 
@@ -116,14 +129,15 @@ class PlayerWorkerThread(threading.Thread):
             with self._operation_lock:
                 self.players.remove(player)
 
-            # self.notify()
-
     @classmethod
     def atexit(cls):
-        for thread in list(cls._threads):
-            thread.stop()
+        with cls._thread_set_lock:
+            for thread in list(cls._threads):
+                # Create a copy as a thread will remove itself on exit causing a
+                # "size changed during iteration" error.
+                thread.stop()
         # Can't be 100% sure that all threads are stopped here as it is technically possible that
         # a thread may just have removed itself from cls._threads as the last action in `run()`
-        # and then was unscheduled; But it will definitely finish very soon after anyways
+        # and then was unscheduled; But it will definitely finish soon after anyways.
 
 atexit.register(PlayerWorkerThread.atexit)
