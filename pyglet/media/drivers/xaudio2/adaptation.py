@@ -48,9 +48,6 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
         self._write_cursor = 0
         self._play_cursor = 0
 
-        # List of (play_cursor, MediaEvent), in sort order
-        self._events = []
-
         # List of (cursor, timestamp), in sort order (cursor gives expiry
         # place of the timestamp)
         self._timestamps = []
@@ -122,7 +119,6 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
 
         self._xa2_source_voice.flush()
         self._buffers.clear()
-        del self._events[:]
         del self._timestamps[:]
 
     def _restart(self, dt):
@@ -189,7 +185,7 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
 
                     self._write_cursor += x2_buffer.AudioBytes  # We've pushed this many bytes into the source player.
 
-                    self._add_audiodata_events(audio_data)
+                    self.append_events(self._write_cursor, audio_data.events)
                     self._add_audiodata_timestamp(audio_data)
 
                     buffers_queued += 1
@@ -205,33 +201,15 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
             # Store buffers temporarily, otherwise they get GC'd.
             self._buffers.extend(current_buffers)
 
-        self._dispatch_pending_events()
+        self.dispatch_media_events(self._play_cursor)
 
     def _dispatch_new_event(self, event_name):
         MediaEvent(event_name).sync_dispatch_to_player(self.player)
-
-    def _add_audiodata_events(self, audio_data):
-        for event in audio_data.events:
-            event_cursor = self._write_cursor + event.timestamp * self.source.audio_format.bytes_per_second
-            assert _debug('Adding event', event, 'at', event_cursor)
-            self._events.append((event_cursor, event))
 
     def _add_audiodata_timestamp(self, audio_data):
         ts_cursor = self._write_cursor + audio_data.length
         self._timestamps.append(
             (ts_cursor, audio_data.timestamp + audio_data.duration))
-
-    def _dispatch_pending_events(self):
-        pending_events = []
-        while self._events and self._events[0][0] <= self._play_cursor:
-            _, event = self._events.pop(0)
-            pending_events.append(event)
-
-        assert _debug('Dispatching pending events: {}'.format(pending_events))
-        assert _debug('Remaining events: {}'.format(self._events))
-
-        for event in pending_events:
-            event.sync_dispatch_to_player(self.player)
 
     def _cleanup_timestamps(self):
         while self._timestamps and self._timestamps[0][0] < self._play_cursor:

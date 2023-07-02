@@ -96,7 +96,6 @@ class PulseAudioPlayer(AbstractAudioPlayer):
         super(PulseAudioPlayer, self).__init__(source, player)
         self.driver = weakref.ref(driver)
 
-        self._events = []
         self._timestamps = []  # List of (ref_time, timestamp)
         self._write_index = 0  # Current write index (tracked manually)
         self._read_index_valid = False # True only if buffer has non-stale data
@@ -146,12 +145,12 @@ class PulseAudioPlayer(AbstractAudioPlayer):
             assert _debug('PulseAudioPlayer: Try to get {} bytes of audio data'.format(nbytes))
             compensation_time = self.get_audio_time_diff()
             self._current_audio_data = self.source.get_audio_data(nbytes, compensation_time)
-            self._schedule_events()
         if self._current_audio_data is None:
             assert _debug('PulseAudioPlayer: No audio data available')
         else:
             assert _debug('PulseAudioPlayer: Got {} bytes of audio data'.format(
                            self._current_audio_data.length))
+            self.append_events(self._write_index, self._current_audio_data.events)
         return self._current_audio_data
 
     def _has_audio_data(self):
@@ -163,14 +162,6 @@ class PulseAudioPlayer(AbstractAudioPlayer):
                 self._current_audio_data = None
             else:
                 self._current_audio_data.consume(nbytes, self.source.audio_format)
-
-    def _schedule_events(self):
-        if self._current_audio_data is not None:
-            for event in self._current_audio_data.events:
-                event_index = self._write_index + event.timestamp * \
-                    self.source.audio_format.bytes_per_second
-                assert _debug('PulseAudioPlayer: Schedule event at index {}'.format(event_index))
-                self._events.append((event_index, event))
 
     def _write_to_stream(self, nbytes=None):
         if nbytes is None:
@@ -217,7 +208,8 @@ class PulseAudioPlayer(AbstractAudioPlayer):
         if self._has_audio_data():
             self._write_to_stream()
         else:
-            self._add_event_at_write_index('on_eos')
+            assert _debug(f'PulseAudioPlayer: Schedule on_eos at index {self._write_index}')
+            self._events.append((self._write_index, MediaEvent('on_eos')))
 
     def _process_events(self):
         assert _debug('PulseAudioPlayer: Process events')
@@ -234,14 +226,7 @@ class PulseAudioPlayer(AbstractAudioPlayer):
         read_index = timing_info.read_index
         assert _debug('PulseAudioPlayer: Dispatch events at index {}'.format(read_index))
 
-        while self._events and self._events[0][0] <= read_index:
-            _, event = self._events.pop(0)
-            assert _debug('PulseAudioPlayer: Dispatch event', event)
-            event.sync_dispatch_to_player(self.player)
-
-    def _add_event_at_write_index(self, event_name):
-        assert _debug('PulseAudioPlayer: Add event at index {}'.format(self._write_index))
-        self._events.append((self._write_index, MediaEvent(event_name)))
+        self.dispatch_media_events(read_index)
 
     def delete(self):
         assert _debug('Delete PulseAudioPlayer')
@@ -272,7 +257,6 @@ class PulseAudioPlayer(AbstractAudioPlayer):
         self._clear_write = True
         self._write_index = self._get_read_index()
         self._timestamps = []
-        self._events = []
 
         with self.stream:
             self._read_index_valid = False

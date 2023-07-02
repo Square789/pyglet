@@ -1,10 +1,14 @@
-import time
 import atexit
 import threading
+import time
+from typing import TYPE_CHECKING, Set
 
 import pyglet
 
 from pyglet.util import debug_print
+
+if TYPE_CHECKING:
+    from pyglet.media.drivers.base import AbstractWorkableAudioPlayer
 
 
 _debug = debug_print('debug_media')
@@ -25,23 +29,23 @@ class PlayerWorkerThread(threading.Thread):
     # problem if these are ever made non-daemonic.
     _thread_set_lock = threading.Lock()
 
-    # Time to wait if there are players, but they're all full:
-    _nap_time = 0.05
+    # How frequently to update all players.
+    _nap_time = 0.02
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(daemon=True)
 
         self._rest_event = threading.Event()
         # A lock that should be held as long as consistency of `self.players` is required.
         self._operation_lock = threading.Lock()
         self._stopped = False
-        self.players = set()
+        self.players: Set[AbstractWorkableAudioPlayer] = set()
 
     def start(self) -> None:
         self._thread_set_lock.acquire()
         super().start()
 
-    def run(self):
+    def run(self) -> None:
         if pyglet.options['debug_trace']:
             pyglet._install_trace()
 
@@ -66,14 +70,14 @@ class PlayerWorkerThread(threading.Thread):
                 if self.players:
                     sleep_time = self._nap_time
                     for player in self.players:
-                        player.refill_buffer()
+                        player.work()
                 else:
                     # sleep until a player is added
                     sleep_time = None
 
         self._threads.remove(self)
 
-    def stop(self):
+    def stop(self) -> None:
         """Stop the thread and wait for it to terminate.
 
         The `stop` instance variable is set to ``True`` and the rest event
@@ -90,7 +94,7 @@ class PlayerWorkerThread(threading.Thread):
             # Ignore on unclean shutdown
             pass
 
-    def notify(self):
+    def notify(self) -> None:
         """Interrupt the current sleep operation.
 
         If the thread is currently sleeping, it will be woken immediately,
@@ -101,10 +105,10 @@ class PlayerWorkerThread(threading.Thread):
         assert _debug('PlayerWorkerThread.notify()')
         self._rest_event.set()
 
-    def add(self, player):
+    def add(self, player: 'AbstractWorkableAudioPlayer') -> None:
         """
         Add a player to the PlayerWorkerThread; which will call
-        `refill_buffer` on it regularly. Notify the thread as well.
+        `work` on it regularly. Notify the thread as well.
 
         Do not call this method from within the thread, as it will deadlock.
         """
@@ -116,7 +120,7 @@ class PlayerWorkerThread(threading.Thread):
 
         self.notify()
 
-    def remove(self, player):
+    def remove(self, player: 'AbstractWorkableAudioPlayer') -> None:
         """
         Remove a player from the PlayerWorkerThread, or ignore if it does
         not exist.
@@ -130,7 +134,7 @@ class PlayerWorkerThread(threading.Thread):
                 self.players.remove(player)
 
     @classmethod
-    def atexit(cls):
+    def atexit(cls) -> None:
         with cls._thread_set_lock:
             for thread in list(cls._threads):
                 # Create a copy as a thread will remove itself on exit causing a

@@ -1,9 +1,14 @@
+from collections import deque
 import math
 import time
 import weakref
 from abc import ABCMeta, abstractmethod
 
 import pyglet
+from pyglet.util import debug_print
+
+
+_debug = debug_print('debug_media')
 
 
 class AbstractAudioPlayer(metaclass=ABCMeta):
@@ -28,8 +33,11 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         # We only keep weakref to the player and its source to avoid
         # circular references. It's the player who owns the source and
         # the audio_player
-        self.source = source
+        self.source = weakref.proxy(source)
         self.player = weakref.proxy(player)
+
+        # A deque of (play_cursor, MediaEvent)
+        self._events = deque()
 
         # Audio synchronization
         self.audio_diff_avg_count = 0
@@ -54,6 +62,16 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         """Stop (pause) playback."""
 
     @abstractmethod
+    def clear(self):
+        """Clear all buffered data and prepare for replacement data.
+
+        The player should be stopped before calling this method.
+        """
+        self._events.clear()
+        self.audio_diff_avg_count = 0
+        self.audio_diff_cum = 0.0
+
+    @abstractmethod
     def delete(self):
         """Stop playing and clean up all resources used by player."""
 
@@ -70,15 +88,6 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
             player.stop()
 
     @abstractmethod
-    def clear(self):
-        """Clear all buffered data and prepare for replacement data.
-
-        The player should be stopped before calling this method.
-        """
-        self.audio_diff_avg_count = 0
-        self.audio_diff_cum = 0.0
-
-    @abstractmethod
     def get_time(self):
         """Return approximation of current playback time within current source.
 
@@ -89,6 +98,24 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         :return: current play cursor time, in seconds.
         """
         # TODO determine which source within group
+
+    def append_events(self, start_index, events):
+        """Append the given :class:`MediaEvent`s to the events deque using
+        the current source's audio format and the supplied ``start_index``
+        to convert their timestamps to dispatch indices.
+        """
+        bps = self.source.audio_format.bytes_per_second
+        for event in events:
+            event_cursor = start_index + event.timestamp * bps
+            assert _debug(f'AbstractAudioPlayer: Adding event {event} at {event_cursor}')
+            self._events.append((event_cursor, event))
+
+    def dispatch_media_events(self, until_index):
+        """Dispatch all :class:`MediaEvent`s whose index is less than or equal
+        to the specified ``until_index``.
+        """
+        while self._events and self._events[0][0] <= until_index:
+            self._events.popleft()[1].sync_dispatch_to_player(self.player)
 
     @abstractmethod
     def prefill_audio(self):
@@ -162,17 +189,25 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         """See `Player.cone_outer_gain`."""
         pass
 
-    @property
-    def source(self):
-        """Source to play from.
-        May be swapped out for one of an equal audio format, but ensure that
-        the player has been paused and cleared beforehand.
+    def set_source(self, source):
+        """Change the player's source for a new one.
+        It must be of the same audio format.
+        Will clear the player, make sure you paused it beforehand.
         """
-        return self._source
+        assert self.source.audio_format == source.audio_format
 
-    @source.setter
-    def source(self, value):
-        self._source = weakref.proxy(value)
+        self.clear()
+        self.source = weakref.proxy(source)
+
+
+class AbstractWorkableAudioPlayer(AbstractAudioPlayer):
+    """An audio player that relies on a thread to regularly call a `work`
+    method in order for it to operate.
+    """
+
+    @abstractmethod
+    def work(self):
+        pass
 
 
 class AbstractAudioDriver(metaclass=ABCMeta):
@@ -204,7 +239,7 @@ class MediaEvent:
 
     __slots__ = 'event', 'timestamp', 'args'
 
-    def __init__(self, event, timestamp=0, *args):
+    def __init__(self, event, timestamp=0.0, *args):
         # Meaning of timestamp is dependent on context; and not seen by application.
         self.event = event
         self.timestamp = timestamp
@@ -212,11 +247,11 @@ class MediaEvent:
 
     def sync_dispatch_to_player(self, player):
         pyglet.app.platform_event_loop.post_event(player, self.event, *self.args)
-        time.sleep(0)
-        # TODO sync with media.dispatch_events
 
     def __repr__(self):
         return f"MediaEvent({self.event}, {self.timestamp}, {self.args})"
 
     def __lt__(self, other):
-        return hash(self) < hash(other)
+        if not isinstance(other, MediaEvent):
+            return NotImplemented
+        return self.timestamp < other.timestamp

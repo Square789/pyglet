@@ -276,8 +276,7 @@ class Player(pyglet.event.EventDispatcher):
 
             if self._audio_player:
                 if old_audio_format == self._source.audio_format:
-                    self._audio_player.clear()
-                    self._audio_player.source = self._source
+                    self._audio_player.set_source(self._source)
                 else:
                     self._audio_player.delete()
                     self._audio_player = None

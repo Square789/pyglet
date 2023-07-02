@@ -4,7 +4,7 @@ import ctypes
 from . import interface
 from pyglet.util import debug_print
 from pyglet.media.mediathreads import PlayerWorkerThread
-from pyglet.media.drivers.base import AbstractAudioDriver, AbstractAudioPlayer, MediaEvent
+from pyglet.media.drivers.base import AbstractAudioDriver, AbstractWorkableAudioPlayer, MediaEvent
 from pyglet.media.drivers.listener import AbstractListener
 
 _debug = debug_print('debug_media')
@@ -33,7 +33,7 @@ def _db2gain(db):
     return math.pow(10.0, float(db)/1000.0)
 
 
-class DirectSoundAudioPlayer(AbstractAudioPlayer):
+class DirectSoundAudioPlayer(AbstractWorkableAudioPlayer):
     # Need to cache these because pyglet API allows update separately, but
     # DSound requires both to be set at once.
     _cone_inner_angle = 360
@@ -78,9 +78,6 @@ class DirectSoundAudioPlayer(AbstractAudioPlayer):
         # write().
         self._play_cursor_ring = 0
         self._write_cursor_ring = 0
-
-        # List of (play_cursor, MediaEvent), in sort order
-        self._events = []
 
         # List of (cursor, timestamp), in sort order (cursor gives expiry
         # place of the timestamp)
@@ -133,10 +130,9 @@ class DirectSoundAudioPlayer(AbstractAudioPlayer):
         self._eos_cursor = None
         self._audiodata_buffer = None
         self._has_underrun = False
-        del self._events[:]
         del self._timestamps[:]
 
-    def refill_buffer(self):
+    def work(self):
         write_size = self._get_write_size()
         if write_size > self.min_buffer_size:
             self._refill(write_size)
@@ -180,7 +176,7 @@ class DirectSoundAudioPlayer(AbstractAudioPlayer):
             if self._eos_cursor is not None:
                 self._move_write_cursor_after_eos()
 
-            self._add_audiodata_events(self._audiodata_buffer)
+            self.append_events(self._write_cursor, self._audiodata_buffer.events)
             self._add_audiodata_timestamp(self._audiodata_buffer)
             self._eos_cursor = None
         elif self._eos_cursor is None:
@@ -203,13 +199,6 @@ class DirectSoundAudioPlayer(AbstractAudioPlayer):
             self._write_cursor_ring -= cursor_diff
             self._write_cursor_ring %= self._buffer_size
 
-    def _add_audiodata_events(self, audio_data):
-        for event in audio_data.events:
-            event_cursor = self._write_cursor + event.timestamp * \
-                           self.source.audio_format.bytes_per_second
-            assert _debug('Adding event', event, 'at', event_cursor)
-            self._events.append((event_cursor, event))
-
     def _add_audiodata_timestamp(self, audio_data):
         ts_cursor = self._write_cursor + audio_data.length
         self._timestamps.append(
@@ -224,20 +213,9 @@ class DirectSoundAudioPlayer(AbstractAudioPlayer):
         self._play_cursor += play_cursor_ring - self._play_cursor_ring
         self._play_cursor_ring = play_cursor_ring
 
-        self._dispatch_pending_events()
+        self.dispatch_media_events(self._play_cursor)
         self._cleanup_timestamps()
         self._check_underrun()
-
-    def _dispatch_pending_events(self):
-        pending_events = []
-        while self._events and self._events[0][0] <= self._play_cursor:
-            _, event = self._events.pop(0)
-            pending_events.append(event)
-        assert _debug('Dispatching pending events: {}'.format(pending_events))
-        assert _debug('Remaining events: {}'.format(self._events))
-
-        for event in pending_events:
-            event.sync_dispatch_to_player(self.player)
 
     def _cleanup_timestamps(self):
         while self._timestamps and self._timestamps[0][0] < self._play_cursor:
