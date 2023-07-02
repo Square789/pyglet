@@ -2,10 +2,10 @@ import math
 import ctypes
 
 from . import interface
-from pyglet.util import debug_print
-from pyglet.media.mediathreads import PlayerWorkerThread
 from pyglet.media.drivers.base import AbstractAudioDriver, AbstractWorkableAudioPlayer, MediaEvent
 from pyglet.media.drivers.listener import AbstractListener
+from pyglet.media.player_worker_thread import PlayerWorkerThread
+from pyglet.util import debug_print
 
 _debug = debug_print('debug_media')
 

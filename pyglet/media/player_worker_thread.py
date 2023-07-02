@@ -29,8 +29,9 @@ class PlayerWorkerThread(threading.Thread):
     # problem if these are ever made non-daemonic.
     _thread_set_lock = threading.Lock()
 
-    # How frequently to update all players.
-    _nap_time = 0.02
+    # Run every 20ms; accurate enough for event dispatching while not hogging too much
+    # time updating the players
+    _nap_time = 0.020
 
     def __init__(self) -> None:
         super().__init__(daemon=True)

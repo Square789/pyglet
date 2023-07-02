@@ -6,7 +6,7 @@ import weakref
 from pyglet.media.drivers.base import AbstractAudioDriver, AbstractWorkableAudioPlayer, MediaEvent
 from pyglet.media.drivers.listener import AbstractListener
 from pyglet.media.drivers.openal import interface
-from pyglet.media.mediathreads import PlayerWorkerThread
+from pyglet.media.player_worker_thread import PlayerWorkerThread
 from pyglet.util import debug_print
 
 if TYPE_CHECKING:
