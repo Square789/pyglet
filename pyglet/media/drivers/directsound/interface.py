@@ -367,9 +367,9 @@ class DirectSoundBuffer:
             self._native_buffer.Lock(write_cursor,
                                      write_size,
                                      ctypes.byref(pointer.audio_ptr_1),
-                                     pointer.audio_length_1,
+                                     ctypes.byref(pointer.audio_length_1),
                                      ctypes.byref(pointer.audio_ptr_2),
-                                     pointer.audio_length_2,
+                                     ctypes.byref(pointer.audio_length_2),
                                      0)
         )
         return pointer
