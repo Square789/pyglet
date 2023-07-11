@@ -70,6 +70,11 @@ class DirectSoundAudioPlayer(AbstractWorkableAudioPlayer):
         # We are done once the play cursor crosses it.
         self._eos_cursor = None
 
+        # Always set to just after the most recently written audio data; so
+        # either undefined data or silence. The eos cursor is set to it once
+        # the source is confirmed to have run out.
+        self._possible_eos_cursor = 0
+
         # Whether the source has hit its end; protect against duplicate
         # dispatch of on_eos events.
         self._has_underrun = False
@@ -77,11 +82,11 @@ class DirectSoundAudioPlayer(AbstractWorkableAudioPlayer):
         # DSound buffer
         self._ds_buffer = self._ds_driver.create_buffer(source.audio_format)
         self._buffer_size = self._ds_buffer.buffer_size
+        self._ds_buffer.current_position = 0
+
         # Align to multiple of 2 temporarily. Will be fixed again before this branch
         # ever goes anywhere though
         self._tolerable_empty_space = (self._buffer_size // 3) & 0xFFFFFFFE
-
-        self._ds_buffer.current_position = 0
 
         self._refill(self._buffer_size)
 
@@ -114,17 +119,21 @@ class DirectSoundAudioPlayer(AbstractWorkableAudioPlayer):
 
     def clear(self):
         assert _debug('DirectSound clear')
-        super(DirectSoundAudioPlayer, self).clear()
+        super().clear()
         self._ds_buffer.current_position = 0
+        self._playing = False
         self._play_cursor_ring = self._write_cursor_ring = 0
-        self._play_cursor = self._write_cursor
+        self._play_cursor = self._write_cursor = 0
         self._eos_cursor = None
+        self._possible_eos_cursor = 0
         self._has_underrun = False
 
     def get_time(self):
         return self._play_cursor / self.source.audio_format.bytes_per_second
 
     def work(self):
+        assert self._playing
+
         self._update_play_cursor()
         self.dispatch_media_events(self._play_cursor)
 
@@ -134,10 +143,10 @@ class DirectSoundAudioPlayer(AbstractWorkableAudioPlayer):
                 self._has_underrun = True
                 MediaEvent('on_eos').sync_dispatch_to_player(self.player)
             # While we are still playing / waiting for the on_eos to be dispatched for
-            # the player to stop; the buffer continues playing. Ensure that silence is
+            # the player to stop, the buffer continues playing. Ensure that silence is
             # filled.
             if (empty := self._get_empty_buffer_space()) > self._tolerable_empty_space:
-                self.write(None, empty)
+                self._write(None, empty)
         else:
             self._maybe_fill()
 
@@ -150,17 +159,13 @@ class DirectSoundAudioPlayer(AbstractWorkableAudioPlayer):
         audio_data = self.source.get_audio_data(size, compensation_time)
         if audio_data is None:
             assert _debug('DirectSoundAudioPlayer: Out of audio data')
-            rlen = 0
             if self._eos_cursor is None:
-                self._eos_cursor = self._write_cursor
+                self._eos_cursor = self._possible_eos_cursor
         else:
             assert _debug(f'DirectSoundAudioPlayer: Got {audio_data.length} bytes of audio data')
-            rlen = audio_data.length
             self.append_events(self._write_cursor, audio_data.events)
-            self.write(audio_data, audio_data.length)
 
-        if rlen < size:
-            self.write(None, size - rlen)
+        self._write(None if audio_data is None else audio_data.data, size)
 
     def _update_play_cursor(self):
         play_cursor_ring = self._ds_buffer.current_position.play_cursor
@@ -175,31 +180,51 @@ class DirectSoundAudioPlayer(AbstractWorkableAudioPlayer):
     def _get_empty_buffer_space(self):
         return self._buffer_size - max(self._write_cursor - self._play_cursor, 0)
 
-    def write(self, audio_data, length):
-        assert _debug(f'Writing {length} bytes of {"silence" if audio_data is None else "data"}')
-        if length == 0:
+    def _write(self, audio_data, region_size):
+        """Write data into the circular DSBuffer, starting at _write_cursor_ring.
+        May supply None as audio_data to only write silence.
+        If the audio data is not sufficient, will fill silence afterwards.
+        If too much audio data is supplied, will write as much as fits.
+        """
+        if region_size == 0:
             return
 
-        write_ptr = self._ds_buffer.lock(self._write_cursor_ring, length)
-        assert 0 < length <= self._buffer_size
-        assert length == write_ptr.audio_length_1.value + write_ptr.audio_length_2.value
-
         if audio_data is None:
-            # Write silence
-            c = 0x80 if self.source.audio_format.sample_size == 8 else 0
-            ctypes.memset(write_ptr.audio_ptr_1, c, write_ptr.audio_length_1.value)
-            if write_ptr.audio_length_2.value > 0:
-                ctypes.memset(write_ptr.audio_ptr_2, c, write_ptr.audio_length_2.value)
+            audio_size = 0
         else:
-            ctypes.memmove(write_ptr.audio_ptr_1, audio_data.data, write_ptr.audio_length_1.value)
-            audio_data.consume(write_ptr.audio_length_1.value, self.source.audio_format)
-            if write_ptr.audio_length_2.value > 0:
-                ctypes.memmove(write_ptr.audio_ptr_2, audio_data.data, write_ptr.audio_length_2.value)
-                audio_data.consume(write_ptr.audio_length_2.value, self.source.audio_format)
+            audio_size = min(region_size, len(audio_data))
+            self._possible_eos_cursor = self._write_cursor + audio_size
+
+        assert _debug(f'Writing {region_size}B ({audio_size}B data, {region_size - audio_size}B silence)')
+
+        write_ptr = self._ds_buffer.lock(self._write_cursor_ring, region_size)
+
+        a1_size = write_ptr.audio_length_1.value
+        a2_size = write_ptr.audio_length_2.value
+
+        assert 0 < region_size <= self._buffer_size
+        assert region_size == a1_size + a2_size
+
+        a2_silence = a2_size
+        s = 0x80 if self.source.audio_format.sample_size == 8 else 0
+
+        if audio_size < a1_size:
+            if audio_size > 0:
+                ctypes.memmove(write_ptr.audio_ptr_1, audio_data, audio_size)
+            ctypes.memset(write_ptr.audio_ptr_1.value + audio_size, s, a1_size - audio_size)
+        else:
+            if a1_size > 0:
+                ctypes.memmove(write_ptr.audio_ptr_1, audio_data, a1_size)
+            if write_ptr.audio_ptr_2 and (a2_audio := (audio_size - a1_size)) > 0:
+                ctypes.memmove(write_ptr.audio_ptr_2, audio_data[a1_size:], a2_audio)
+                a2_silence -= a2_audio
+        if write_ptr.audio_ptr_2 and a2_silence > 0:
+            ctypes.memset(write_ptr.audio_ptr_2.value + (a2_size - a2_silence), s, a2_silence)
+
         self._ds_buffer.unlock(write_ptr)
 
-        self._write_cursor += length
-        self._write_cursor_ring += length
+        self._write_cursor += region_size
+        self._write_cursor_ring += region_size
         self._write_cursor_ring %= self._buffer_size
 
     def set_volume(self, volume):
@@ -277,10 +302,12 @@ class DirectSoundDriver(AbstractAudioDriver):
         return DirectSoundListener(self._ds_listener, self._ds_driver.primary_buffer)
 
     def delete(self):
+        assert _debug("Deleting DirectSoundDriver")
         if hasattr(self, 'worker'):
             self.worker.stop()
         # Make sure the _ds_listener is deleted before the _ds_driver
         self._ds_listener = None
+        assert _debug("DirectSoundDriver deleted.")
 
 
 class DirectSoundListener(AbstractListener):
