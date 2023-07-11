@@ -2,6 +2,7 @@
 """
 
 import os
+import math
 import sys
 
 import pyglet
@@ -29,6 +30,22 @@ def asstr(s):
     if isinstance(s, str):
         return s
     return s.decode("utf-8")
+
+
+# Based on: https://stackoverflow.com/a/56225940
+def closest_power_of_two(x: int) -> int:
+    if x <= 2:
+        return 2
+    if (x >> (x.bit_length() - 2)) & 1:
+        return 1 << math.ceil(math.log2(x))
+    else:
+        return 1 << math.floor(math.log2(x))
+
+
+def next_or_equal_power_of_two(x: int) -> int:
+    if x <= 1:
+        return 1
+    return 1 << math.ceil(math.log2(x))
 
 
 def debug_print(enabled_or_option='debug'):

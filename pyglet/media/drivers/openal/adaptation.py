@@ -1,5 +1,4 @@
 from collections import deque
-import math
 from typing import TYPE_CHECKING, List, Optional, Tuple
 import weakref
 
@@ -7,23 +6,13 @@ from pyglet.media.drivers.base import AbstractAudioDriver, AbstractWorkableAudio
 from pyglet.media.drivers.listener import AbstractListener
 from pyglet.media.drivers.openal import interface
 from pyglet.media.player_worker_thread import PlayerWorkerThread
-from pyglet.util import debug_print
+from pyglet.util import closest_power_of_two, debug_print
 
 if TYPE_CHECKING:
     from pyglet.media import Source, Player
 
 
 _debug = debug_print('debug_media')
-
-
-# Based on: https://stackoverflow.com/a/56225940
-def closest_power_of_two(x: int) -> int:
-    if x <= 2:
-        return 2
-    if (x >> (x.bit_length() - 2)) & 1:
-        return 1 << math.ceil(math.log2(x))
-    else:
-        return 1 << math.floor(math.log2(x))
 
 
 class OpenALDriver(AbstractAudioDriver):

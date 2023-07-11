@@ -29,17 +29,7 @@ from pyglet.gl import *
 from pyglet.graphics import allocation, shader, vertexarray
 from pyglet.graphics.vertexbuffer import BufferObject, MappableBufferObject
 
-
-def _nearest_pow2(v):
-    # From http://graphics.stanford.edu/~seander/bithacks.html#RoundUpPowerOf2
-    # Credit: Sean Anderson
-    v -= 1
-    v |= v >> 1
-    v |= v >> 2
-    v |= v >> 4
-    v |= v >> 8
-    v |= v >> 16
-    return v + 1
+from pyglet.util import next_or_equal_power_of_two
 
 
 _c_types = {
@@ -126,7 +116,7 @@ class VertexDomain:
         try:
             return self.allocator.alloc(count)
         except allocation.AllocatorMemoryException as e:
-            capacity = _nearest_pow2(e.requested_capacity)
+            capacity = next_or_equal_power_of_two(e.requested_capacity)
             self.version += 1
             for buffer, _ in self.buffer_attributes:
                 buffer.resize(capacity * buffer.element_size)
@@ -138,7 +128,7 @@ class VertexDomain:
         try:
             return self.allocator.realloc(start, count, new_count)
         except allocation.AllocatorMemoryException as e:
-            capacity = _nearest_pow2(e.requested_capacity)
+            capacity = next_or_equal_power_of_two(e.requested_capacity)
             self.version += 1
             for buffer, _ in self.buffer_attributes:
                 buffer.resize(capacity * buffer.element_size)
@@ -342,7 +332,7 @@ class IndexedVertexDomain(VertexDomain):
         try:
             return self.index_allocator.alloc(count)
         except allocation.AllocatorMemoryException as e:
-            capacity = _nearest_pow2(e.requested_capacity)
+            capacity = next_or_equal_power_of_two(e.requested_capacity)
             self.version += 1
             self.index_buffer.resize(capacity * self.index_element_size)
             self.index_allocator.set_capacity(capacity)
@@ -353,7 +343,7 @@ class IndexedVertexDomain(VertexDomain):
         try:
             return self.index_allocator.realloc(start, count, new_count)
         except allocation.AllocatorMemoryException as e:
-            capacity = _nearest_pow2(e.requested_capacity)
+            capacity = next_or_equal_power_of_two(e.requested_capacity)
             self.version += 1
             self.index_buffer.resize(capacity * self.index_element_size)
             self.index_allocator.set_capacity(capacity)
