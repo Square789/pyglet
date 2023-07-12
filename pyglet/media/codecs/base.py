@@ -33,9 +33,6 @@ class AudioFormat:
                 self.sample_size == other.sample_size and
                 self.sample_rate == other.sample_rate)
 
-    def __ne__(self, other):
-        return not self.__eq__(other)
-
     def __repr__(self):
         return '%s(channels=%d, sample_size=%d, sample_rate=%d)' % (
             self.__class__.__name__, self.channels, self.sample_size,
