@@ -24,6 +24,7 @@ class WaveSource(StreamingSource):
             raise WAVEDecodeException(e)
 
         nchannels, sampwidth, framerate, nframes, comptype, compname = self._wave.getparams()
+        print(self._wave.getparams())
 
         self.audio_format = AudioFormat(channels=nchannels, sample_size=sampwidth * 8, sample_rate=framerate)
 
@@ -97,7 +98,7 @@ class WaveEncoder(MediaEncoder):
         source.seek(0)
         wave_writer = wave.open(file, mode='wb')
         wave_writer.setnchannels(source.audio_format.channels)
-        wave_writer.setsampwidth(source.audio_format.bytes_per_sample)
+        wave_writer.setsampwidth(source.audio_format.sample_size // 8)
         wave_writer.setframerate(source.audio_format.sample_rate)
         # Save the data in 1-second chunks:
         chunksize = source.audio_format.bytes_per_second
