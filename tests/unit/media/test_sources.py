@@ -30,10 +30,10 @@ class AudioFormatTestCase(unittest.TestCase):
         af1 = AudioFormat(1, 8, 22050)
         af2 = AudioFormat(2, 16, 44100)
 
-        self.assertEqual(af1.bytes_per_sample, 1)
+        self.assertEqual(af1.bytes_per_frame, 1)
         self.assertEqual(af1.bytes_per_second, 22050)
 
-        self.assertEqual(af2.bytes_per_sample, 4)
+        self.assertEqual(af2.bytes_per_frame, 4)
         self.assertEqual(af2.bytes_per_second, 176400)
 
     def test_repr(self):

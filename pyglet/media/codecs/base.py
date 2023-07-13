@@ -23,8 +23,16 @@ class AudioFormat:
         self.sample_rate = sample_rate
 
         # Convenience
-        self.bytes_per_sample = (sample_size >> 3) * channels
-        self.bytes_per_second = self.bytes_per_sample * sample_rate
+
+        self.bytes_per_frame = (sample_size // 8) * channels
+        self.bytes_per_second = self.bytes_per_frame * sample_rate
+
+        self.bytes_per_sample = self.bytes_per_frame
+        """This attribute is kept for compatibility and should not be used.
+        For the actual amount of bytes per sample, divide `sample_size` by eight.
+        This value contains the bytes per audio frame, and using `bytes_per_frame` should
+        be preferred.
+        """
 
     def __eq__(self, other):
         if other is None:
@@ -430,8 +438,7 @@ class StaticSource(Source):
 
 
 class StaticMemorySource(StaticSource):
-    """
-    Helper class for default implementation of :class:`.StaticSource`.
+    """Helper class for default implementation of :class:`.StaticSource`.
 
     Do not use directly. This class is used internally by pyglet.
 
@@ -456,9 +463,9 @@ class StaticMemorySource(StaticSource):
         offset = int(timestamp * self.audio_format.bytes_per_second)
 
         # Align to sample
-        if self.audio_format.bytes_per_sample == 2:
+        if self.audio_format.bytes_per_frame == 2:
             offset &= 0xfffffffe
-        elif self.audio_format.bytes_per_sample == 4:
+        elif self.audio_format.bytes_per_frame == 4:
             offset &= 0xfffffffc
 
         self._file.seek(offset)
@@ -478,9 +485,9 @@ class StaticMemorySource(StaticSource):
         timestamp = float(offset) / self.audio_format.bytes_per_second
 
         # Align to sample size
-        if self.audio_format.bytes_per_sample == 2:
+        if self.audio_format.bytes_per_frame == 2:
             num_bytes &= 0xfffffffe
-        elif self.audio_format.bytes_per_sample == 4:
+        elif self.audio_format.bytes_per_frame == 4:
             num_bytes &= 0xfffffffc
 
         data = self._file.read(num_bytes)
