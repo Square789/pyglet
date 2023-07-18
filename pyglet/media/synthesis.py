@@ -223,8 +223,10 @@ class SynthesisSource(Source):
         self._offset = 0
 
     def get_audio_data(self, num_bytes, compensation_time=0.0):
-        """Return `num_bytes` bytes of audio data."""
+        """Return at most `num_bytes` bytes of audio data."""
         num_bytes = min(num_bytes, self._max_offset - self._offset)
+        samples = num_bytes // 2
+        num_bytes = samples * 2
         if num_bytes <= 0:
             return None
 
@@ -233,7 +235,6 @@ class SynthesisSource(Source):
         self._offset += num_bytes
 
         # Generate bytes:
-        samples = num_bytes >> 1
         generator = self._generator
         envelope = self._envelope_generator
         data = (int(next(generator) * next(envelope) * 0x7fff) for _ in range(samples))
