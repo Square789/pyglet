@@ -147,7 +147,6 @@ class DirectSoundAudioPlayer(AbstractWorkableAudioPlayer):
         if not self._has_underrun and self._play_cursor > self._eos_cursor:
             self._has_underrun = True
             MediaEvent('on_eos').sync_dispatch_to_player(self.player)
-            print("dispatched on_eos")
 
         # While we are still playing / waiting for the on_eos to be dispatched for
         # the player to stop, the buffer continues playing. Ensure that silence is
