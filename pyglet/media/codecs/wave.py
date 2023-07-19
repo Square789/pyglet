@@ -24,7 +24,6 @@ class WaveSource(StreamingSource):
             raise WAVEDecodeException(e)
 
         nchannels, sampwidth, framerate, nframes, comptype, compname = self._wave.getparams()
-        print(self._wave.getparams())
 
         self.audio_format = AudioFormat(channels=nchannels, sample_size=sampwidth * 8, sample_rate=framerate)
 
