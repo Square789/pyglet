@@ -42,7 +42,7 @@ class DirectSoundAudioPlayer(AbstractWorkableAudioPlayer):
     min_buffer_size = 9600
 
     def __init__(self, driver, ds_driver, source, player):
-        super(DirectSoundAudioPlayer, self).__init__(source, player)
+        super().__init__(source, player)
 
         # We keep here a strong reference because the AudioDriver is anyway
         # a singleton object which will only be deleted when the application
@@ -80,15 +80,17 @@ class DirectSoundAudioPlayer(AbstractWorkableAudioPlayer):
         self._has_underrun = False
 
         # DSound buffer
-        self._ds_buffer = self._ds_driver.create_buffer(source.audio_format)
-        self._buffer_size = self._ds_buffer.buffer_size
+        # Make it hold 1.5 seconds of data.
+        buffer_size = max(32768, int(source.audio_format.bytes_per_second * 1.5))
+        self._ds_buffer = self._ds_driver.create_buffer(source.audio_format, buffer_size)
         self._ds_buffer.current_position = 0
+        self._buffer_size = buffer_size
 
-        # Align to multiple of 2 temporarily. Will be fixed again before this branch
-        # ever goes anywhere though
-        self._tolerable_empty_space = (self._buffer_size // 3) & 0xFFFFFFFE
+        assert self._ds_buffer.buffer_size == buffer_size
 
-        self._refill(self._buffer_size)
+        # Once we drop below a third; so 0.5 seconds of buffer space are unused, make an effort
+        # to refill most of that empty space up again.
+        self._tolerable_empty_space = min(1048576, buffer_size // 3)
 
     def __del__(self):
         # We decrease the IDirectSound refcount
@@ -137,35 +139,42 @@ class DirectSoundAudioPlayer(AbstractWorkableAudioPlayer):
         self._update_play_cursor()
         self.dispatch_media_events(self._play_cursor)
 
-        if self._eos_cursor is not None:
-            # Source exhausted, waiting for play cursor to hit the end
-            if not self._has_underrun and self._play_cursor > self._eos_cursor:
-                self._has_underrun = True
-                MediaEvent('on_eos').sync_dispatch_to_player(self.player)
-            # While we are still playing / waiting for the on_eos to be dispatched for
-            # the player to stop, the buffer continues playing. Ensure that silence is
-            # filled.
-            if (empty := self._get_empty_buffer_space()) > self._tolerable_empty_space:
-                self._write(None, empty)
-        else:
+        if self._eos_cursor is None:
             self._maybe_fill()
+            return
+
+        # Source exhausted, just check whether we hit the end
+        if not self._has_underrun and self._play_cursor > self._eos_cursor:
+            self._has_underrun = True
+            MediaEvent('on_eos').sync_dispatch_to_player(self.player)
+            print("dispatched on_eos")
+
+        # While we are still playing / waiting for the on_eos to be dispatched for
+        # the player to stop, the buffer continues playing. Ensure that silence is
+        # filled.
+        if (empty := self._get_empty_buffer_space()) > self._tolerable_empty_space:
+            self._write(None, empty)
 
     def _maybe_fill(self):
-        if (empty := self._get_empty_buffer_space()) > self._tolerable_empty_space:
-            self._refill(empty)
+        if (empty_size := self._get_empty_buffer_space()) > self._tolerable_empty_space:
+            self._refill(self.source.audio_format.align(empty_size))
 
     def _refill(self, size):
+        """Refill the next `size` bytes in the buffer using the source.
+        `size` must be aligned.
+        """
         compensation_time = self.get_audio_time_diff()
         audio_data = self.source.get_audio_data(size, compensation_time)
         if audio_data is None:
             assert _debug('DirectSoundAudioPlayer: Out of audio data')
             if self._eos_cursor is None:
                 self._eos_cursor = self._possible_eos_cursor
+            self._write(None, size)
+
         else:
             assert _debug(f'DirectSoundAudioPlayer: Got {audio_data.length} bytes of audio data')
             self.append_events(self._write_cursor, audio_data.events)
-
-        self._write(None if audio_data is None else audio_data.data, size)
+            self._write(audio_data, size)
 
     def _update_play_cursor(self):
         play_cursor_ring = self._ds_buffer.current_position.play_cursor
@@ -192,8 +201,9 @@ class DirectSoundAudioPlayer(AbstractWorkableAudioPlayer):
         if audio_data is None:
             audio_size = 0
         else:
-            audio_size = min(region_size, len(audio_data))
+            audio_size = min(region_size, audio_data.length)
             self._possible_eos_cursor = self._write_cursor + audio_size
+            raw_data = audio_data.data
 
         assert _debug(f'Writing {region_size}B ({audio_size}B data, {region_size - audio_size}B silence)')
 
@@ -210,13 +220,13 @@ class DirectSoundAudioPlayer(AbstractWorkableAudioPlayer):
 
         if audio_size < a1_size:
             if audio_size > 0:
-                ctypes.memmove(write_ptr.audio_ptr_1, audio_data, audio_size)
+                ctypes.memmove(write_ptr.audio_ptr_1, raw_data, audio_size)
             ctypes.memset(write_ptr.audio_ptr_1.value + audio_size, s, a1_size - audio_size)
         else:
             if a1_size > 0:
-                ctypes.memmove(write_ptr.audio_ptr_1, audio_data, a1_size)
+                ctypes.memmove(write_ptr.audio_ptr_1, raw_data, a1_size)
             if write_ptr.audio_ptr_2 and (a2_audio := (audio_size - a1_size)) > 0:
-                ctypes.memmove(write_ptr.audio_ptr_2, audio_data[a1_size:], a2_audio)
+                ctypes.memmove(write_ptr.audio_ptr_2, raw_data[a1_size:], a2_audio)
                 a2_silence -= a2_audio
         if write_ptr.audio_ptr_2 and a2_silence > 0:
             ctypes.memset(write_ptr.audio_ptr_2.value + (a2_size - a2_silence), s, a2_silence)

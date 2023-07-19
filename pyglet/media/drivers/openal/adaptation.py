@@ -6,7 +6,7 @@ from pyglet.media.drivers.base import AbstractAudioDriver, AbstractWorkableAudio
 from pyglet.media.drivers.listener import AbstractListener
 from pyglet.media.drivers.openal import interface
 from pyglet.media.player_worker_thread import PlayerWorkerThread
-from pyglet.util import closest_power_of_two, debug_print
+from pyglet.util import debug_print
 
 if TYPE_CHECKING:
     from pyglet.media import Source, Player
@@ -121,17 +121,9 @@ class OpenALAudioPlayer(AbstractWorkableAudioPlayer):
         # Deque of the currently queued buffer's sizes
         self._queued_buffer_sizes = deque()
 
-        self._ideal_buffer_size = self._get_ideal_buffer_size(source.audio_format)
-
-    def __del__(self) -> None:
-        self.delete()
-
-    def _get_ideal_buffer_size(self, fmt) -> int:
-        return closest_power_of_two(int(fmt.bytes_per_second * 0.5))
-
-    def set_source(self, source: 'Source') -> None:
-        super().set_source(source)
-        self._ideal_buffer_size = self._get_ideal_buffer_size(source.audio_format)
+        # Request ~500ms of audio data per refill
+        fmt = source.audio_format
+        self._ideal_buffer_size = fmt.align(int(fmt.bytes_per_second * 0.5))
 
     def delete(self) -> None:
         self.driver.worker.remove(self)
@@ -210,7 +202,7 @@ class OpenALAudioPlayer(AbstractWorkableAudioPlayer):
     def _refill(self) -> None:
         compensation_time = self.get_audio_time_diff()
         audio_data = self.source.get_audio_data(self._ideal_buffer_size, compensation_time)
-        if audio_data is None or audio_data.length == 0:
+        if audio_data is None:
             self._pyglet_source_exhausted = True
             # We could schedule the on_eos event at the very end of written data here, but
             # this would not check whether the source actually stopped playing.

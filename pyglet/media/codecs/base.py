@@ -1,6 +1,16 @@
 import io
+from typing import TYPE_CHECKING, BinaryIO, List, Optional, Union
 
 from pyglet.media.exceptions import MediaException, CannotSeekException
+from pyglet.util import next_or_equal_power_of_two
+
+if TYPE_CHECKING:
+    import ctypes
+    from pyglet.image import AbstractImage
+    from pyglet.image.animation import Animation
+    from pyglet.media.codecs import MediaEncoder
+    from pyglet.media.drivers.base import MediaEvent
+    from pyglet.media.player import Player
 
 
 class AudioFormat:
@@ -17,7 +27,7 @@ class AudioFormat:
         sample_rate (int): Samples per second (in Hertz).
     """
 
-    def __init__(self, channels, sample_size, sample_rate):
+    def __init__(self, channels: int, sample_size: int, sample_rate: int) -> None:
         self.channels = channels
         self.sample_size = sample_size
         self.sample_rate = sample_rate
@@ -34,14 +44,19 @@ class AudioFormat:
         be preferred.
         """
 
-    def __eq__(self, other):
-        if other is None:
-            return False
-        return (self.channels == other.channels and
-                self.sample_size == other.sample_size and
-                self.sample_rate == other.sample_rate)
+    def align(self, num_bytes: int) -> int:
+        """Aligns a given amount of bytes to the audio frame size of this format.
+        """
+        return num_bytes - (num_bytes % self.bytes_per_frame)
 
-    def __repr__(self):
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, AudioFormat):
+            return (self.channels == other.channels and
+                    self.sample_size == other.sample_size and
+                    self.sample_rate == other.sample_rate)
+        return NotImplemented
+
+    def __repr__(self) -> str:
         return '%s(channels=%d, sample_size=%d, sample_rate=%d)' % (
             self.__class__.__name__, self.channels, self.sample_size,
             self.sample_rate)
@@ -68,13 +83,13 @@ class VideoFormat:
             .. versionadded:: 1.2
     """
 
-    def __init__(self, width, height, sample_aspect=1.0):
+    def __init__(self, width: int, height: int, sample_aspect: float = 1.0) -> None:
         self.width = width
         self.height = height
         self.sample_aspect = sample_aspect
         self.frame_rate = None
 
-    def __eq__(self, other):
+    def __eq__(self, other) -> bool:
         if isinstance(other, VideoFormat):
             return (self.width == other.width and
                     self.height == other.height and
@@ -89,7 +104,7 @@ class AudioData:
     This class is used internally by pyglet.
 
     Args:
-        data (str or ctypes array or pointer): Sample data.
+        data (bytes or ctypes array): Sample data.
         length (int): Size of sample data, in bytes.
         timestamp (float): Time of the first sample, in seconds.
         duration (float): Total data duration, in seconds.
@@ -100,23 +115,28 @@ class AudioData:
 
     __slots__ = 'data', 'length', 'timestamp', 'duration', 'events'
 
-    def __init__(self, data, length, timestamp, duration, events):
+    def __init__(self,
+                 data: Union[bytes, 'ctypes.Array'],
+                 length: int,
+                 timestamp: float,
+                 duration: float,
+                 events: List['MediaEvent']) -> None:
         self.data = data
         self.length = length
         self.timestamp = timestamp
         self.duration = duration
         self.events = events
 
-    def __eq__(self, other):
+    def __eq__(self, other) -> bool:
         if isinstance(other, AudioData):
             return (self.data == other.data and
                     self.length == other.length and
                     self.timestamp == other.timestamp and
                     self.duration == other.duration and
                     self.events == other.events)
-        return False
+        return NotImplemented
 
-    def consume(self, num_bytes, audio_format):
+    def consume(self, num_bytes: int, audio_format: AudioFormat) -> None:
         """Remove some data from the beginning of the packet.
 
         All events are cleared.
@@ -140,7 +160,7 @@ class AudioData:
         self.duration -= num_bytes / audio_format.bytes_per_second
         self.timestamp += num_bytes / audio_format.bytes_per_second
 
-    def get_string_data(self):
+    def get_string_data(self) -> bytes:
         """Return data as a bytestring.
 
         Returns:
@@ -201,16 +221,21 @@ class Source:
             is the current source.
     """
 
-    _duration = None
-    _players = []  # List of players when calling Source.play
+    _players: List['Player'] = []  # Players created through Source.play
 
-    audio_format = None
-    video_format = None
-    info = None
-    is_player_source = False
+    def __init__(self,
+                 audio_format: Optional[AudioFormat] = None,
+                 video_format: Optional[VideoFormat] = None,
+                 info: Optional[SourceInfo] = None) -> None:
+        self.audio_format = audio_format
+        self.video_format = video_format
+        self.info = info
+
+        self._duration = None
+        self.is_player_source = False
 
     @property
-    def duration(self):
+    def duration(self) -> float:
         """float: The length of the source, in seconds.
 
         Not all source durations can be determined; in this case the value
@@ -220,7 +245,56 @@ class Source:
         """
         return self._duration
 
-    def play(self):
+    def is_precise(self) -> bool:
+        """bool: Whether this source is considered precise.
+
+        ``x`` bytes on source ``s`` are considered aligned if
+        ``x % s.audio_format.bytes_per_frame == 0``, so there'd be no partial
+        audio frame in the returned data.
+
+        A source is precise if - for an aligned request of ``x`` bytes - it
+        returns:
+          - If ``x`` or more bytes are available, ``x`` bytes.
+          - If not enough bytes are available anymore, ``r`` bytes where
+            ``r < x`` and ``r`` is aligned.
+
+        A source is **not** precise if it does any of these:
+          - Returns less than ``x`` bytes for an aligned request of ``x``
+            bytes although data still remains so that an additional request
+            would return additional :class:`.AudioData` / not ``None``.
+          - Returns more bytes than requested.
+          - Returns an unaligned amount of bytes.
+
+        If this method returns ``False``, pyglet will wrap the source in an
+        alignment-forcing buffer creating additional overhead.
+
+        If this method is overridden to return ``True``, the step above is
+        skipped and pyglet's internals are guaranteed to never make unaligned
+        requests, or requests of less than 1024 bytes.
+
+        If this method is overridden to return ``True`` although the source
+        does not comply with the requirements above, audio playback may be
+        negatively impacted.
+
+        :Returns:
+            bool: Whether the source is precise.
+        """
+        return False
+
+    def acquire(self) -> None:
+        """Acquire the source. This is used internally to prevent the same
+        source from being queued on multiple player accidentally.
+        """
+        if self.is_player_source:
+            raise MediaException('This source is already queued on a player.')
+        self.is_player_source = True
+
+    def release(self) -> None:
+        """Release the source to free it up for usage on other players again.
+        """
+        self.is_player_source = False
+
+    def play(self) -> None:
         """Play the source.
 
         This is a convenience method which creates a Player for
@@ -244,7 +318,7 @@ class Source:
         player.on_player_eos = _on_player_eos
         return player
 
-    def get_animation(self):
+    def get_animation(self) -> 'Animation':
         """
         Import all video frames into memory.
 
@@ -278,7 +352,7 @@ class Source:
                 next_ts = self.get_next_video_timestamp()
             return Animation(frames)
 
-    def get_next_video_timestamp(self):
+    def get_next_video_timestamp(self) -> Optional[float]:
         """Get the timestamp of the next video frame.
 
         .. versionadded:: 1.1
@@ -289,7 +363,7 @@ class Source:
         """
         pass
 
-    def get_next_video_frame(self):
+    def get_next_video_frame(self) -> Optional['AbstractImage']:
         """Get the next video frame.
 
         .. versionadded:: 1.1
@@ -301,7 +375,10 @@ class Source:
         """
         pass
 
-    def save(self, filename, file=None, encoder=None):
+    def save(self,
+             filename: str,
+             file: Optional[BinaryIO] = None,
+             encoder: Optional['MediaEncoder'] = None) -> None:
         """Save this Source to a file.
 
         :Parameters:
@@ -317,14 +394,14 @@ class Source:
 
         """
         if encoder:
-            return encoder.enccode(self, filename, file)
+            return encoder.encode(self, filename, file)
         else:
             import pyglet.media.codecs
             return pyglet.media.codecs.registry.encode(self, filename, file)
 
     # Internal methods that Player calls on the source:
 
-    def seek(self, timestamp):
+    def seek(self, timestamp: float) -> None:
         """Seek to given timestamp.
 
         Args:
@@ -333,18 +410,20 @@ class Source:
         """
         raise CannotSeekException()
 
-    def get_queue_source(self):
+    def get_queue_source(self) -> 'Source':
         """Return the ``Source`` to be used as the queue source for a player.
 
         Default implementation returns self.
         """
         return self
 
-    def get_audio_data(self, num_bytes, compensation_time=0.0):
+    def get_audio_data(self, num_bytes: int, compensation_time: float = 0.0) -> Optional[AudioData]:
         """Get next packet of audio data.
 
         Args:
-            num_bytes (int): Maximum number of bytes of data to return.
+            num_bytes (int): The requested amount of bytes, returned
+                amount may be lower or higher. See the docstring of
+                :method:`is_precise` for additional information.
             compensation_time (float): Time in sec to compensate due to a
                 difference between the master clock and the audio clock.
 
@@ -362,20 +441,21 @@ class StreamingSource(Source):
     :class:`~pyglet.media.player.Player`.
     """
 
-    def get_queue_source(self):
+    def get_queue_source(self) -> 'StreamingSource':
         """Return the ``Source`` to be used as the source for a player.
 
-        Default implementation returns self.
+        Default implementation returns ``self`` if this source is precise as
+        specified by :method:`is_precise`. Otherwise, a new
+        :class:`PreciseStreamingSource` wrapping this source is returned.
 
         Returns:
             :class:`.Source`
         """
-        if self.is_player_source:
-            raise MediaException('This source is already queued on a player.')
-        self.is_player_source = True
-        return self
+        r = self if self.is_precise() else PreciseStreamingSource(self)
+        r.acquire()
+        return r
 
-    def delete(self):
+    def delete(self) -> None:
         """Release the resources held by this StreamingSource."""
         pass
 
@@ -393,17 +473,18 @@ class StaticSource(Source):
             from.
     """
 
-    def __init__(self, source):
-        source = source.get_queue_source()
-        if source.video_format:
-            raise NotImplementedError('Static sources not supported for video.')
+    def __init__(self, source: Source) -> None:
+        super().__init__(source.audio_format)
 
-        self.audio_format = source.audio_format
+        if source.video_format:
+            raise NotImplementedError('Static sources are not supported for video.')
+
         if not self.audio_format:
-            self._data = None
+            self._data = b""
             self._duration = 0.
             return
 
+        source.acquire()
         # Arbitrary: number of bytes to request at a time.
         buffer_size = 1 << 20  # 1 MB
 
@@ -412,18 +493,25 @@ class StaticSource(Source):
         data = io.BytesIO()
         while True:
             audio_data = source.get_audio_data(buffer_size)
-            if not audio_data:
+            if audio_data is None:
                 break
             data.write(audio_data.get_string_data())
-        self._data = data.getvalue()
 
+        source.release()
+
+        self._data = data.getvalue()
         self._duration = len(self._data) / self.audio_format.bytes_per_second
 
-    def get_queue_source(self):
-        if self._data is not None:
-            return StaticMemorySource(self._data, self.audio_format)
+    def get_queue_source(self) -> 'StaticMemorySource':
+        return StaticMemorySource(self._data, self.audio_format)
 
-    def get_audio_data(self, num_bytes, compensation_time=0.0):
+    def acquire(self) -> None:
+        raise RuntimeError('StaticSource cannot be acquired')
+
+    def release(self) -> None:
+        raise RuntimeError('StaticSource cannot be released')
+
+    def get_audio_data(self, num_bytes: int, compensation_time: float = 0.0) -> Optional[AudioData]:
         """The StaticSource does not provide audio data.
 
         When the StaticSource is queued on a
@@ -437,40 +525,38 @@ class StaticSource(Source):
         raise RuntimeError('StaticSource cannot be queued.')
 
 
-class StaticMemorySource(StaticSource):
+class StaticMemorySource(Source):
     """Helper class for default implementation of :class:`.StaticSource`.
 
     Do not use directly. This class is used internally by pyglet.
 
     Args:
-        data (AudioData): The audio data.
+        data (bytes or readable buffer): The audio data.
         audio_format (AudioFormat): The audio format.
     """
 
-    def __init__(self, data, audio_format):
+    def __init__(self, data, audio_format: AudioFormat) -> None:
         """Construct a memory source over the given data buffer."""
+        super().__init__(audio_format)
+
         self._file = io.BytesIO(data)
         self._max_offset = len(data)
-        self.audio_format = audio_format
         self._duration = len(data) / float(audio_format.bytes_per_second)
 
-    def seek(self, timestamp):
+    def get_queue_source(self) -> Source:  # Unsure whether this method should exist
+        return StaticMemorySource(self._file.getbuffer(), self.audio_format)
+
+    def seek(self, timestamp: float) -> None:
         """Seek to given timestamp.
 
         Args:
             timestamp (float): Time where to seek in the source.
         """
         offset = int(timestamp * self.audio_format.bytes_per_second)
+        # Align to frame to not return partial ones and corrupt audio data
+        self._file.seek(self.audio_format.align(offset))
 
-        # Align to sample
-        if self.audio_format.bytes_per_frame == 2:
-            offset &= 0xfffffffe
-        elif self.audio_format.bytes_per_frame == 4:
-            offset &= 0xfffffffc
-
-        self._file.seek(offset)
-
-    def get_audio_data(self, num_bytes, compensation_time=0.0):
+    def get_audio_data(self, num_bytes: int, compensation_time: float = 0.0) -> Optional[AudioData]:
         """Get next packet of audio data.
 
         Args:
@@ -484,14 +570,8 @@ class StaticMemorySource(StaticSource):
         offset = self._file.tell()
         timestamp = float(offset) / self.audio_format.bytes_per_second
 
-        # Align to sample size
-        if self.audio_format.bytes_per_frame == 2:
-            num_bytes &= 0xfffffffe
-        elif self.audio_format.bytes_per_frame == 4:
-            num_bytes &= 0xfffffffc
-
-        data = self._file.read(num_bytes)
-        if not len(data):
+        data = self._file.read(self.audio_format.align(num_bytes))
+        if not data:
             return None
 
         duration = float(len(data)) / self.audio_format.bytes_per_second
@@ -506,7 +586,7 @@ class SourceGroup:
     The first source added sets the format.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.audio_format = None
         self.video_format = None
         self.duration = 0.0
@@ -514,24 +594,24 @@ class SourceGroup:
         self._dequeued_durations = []
         self._sources = []
 
-    def seek(self, time):
+    def seek(self, time: float) -> None:
         if self._sources:
             self._sources[0].seek(time)
 
-    def add(self, source):
+    def add(self, source: Source) -> None:
         self.audio_format = self.audio_format or source.audio_format
         source = source.get_queue_source()
         assert (source.audio_format == self.audio_format), "Sources must share the same audio format."
         self._sources.append(source)
         self.duration += source.duration
 
-    def has_next(self):
+    def has_next(self) -> bool:
         return len(self._sources) > 1
 
-    def get_queue_source(self):
+    def get_queue_source(self) -> 'SourceGroup':
         return self
 
-    def _advance(self):
+    def _advance(self) -> None:
         if self._sources:
             self._timestamp_offset += self._sources[0].duration
             self._dequeued_durations.insert(0, self._sources[0].duration)
@@ -542,7 +622,7 @@ class SourceGroup:
                 old_source.delete()
                 del old_source
 
-    def get_audio_data(self, num_bytes, compensation_time=0.0):
+    def get_audio_data(self, num_bytes: int, compensation_time: float = 0.0) -> Optional[AudioData]:
         """Get next audio packet.
 
         :Parameters:
@@ -570,3 +650,76 @@ class SourceGroup:
                 self._advance()
 
         return AudioData(buffer, len(buffer), timestamp, duration, [])
+
+
+class PreciseStreamingSource(StreamingSource):
+    """Wrap non-precise sources that may over- or undershoot.
+
+    Purpose of this source is to always return data whose length is equal or
+    less than in length, where less hints at definite source exhaustion.
+
+    This source is used by pyglet internally, you probably don't need to
+    bother with it.
+
+    This source erases AudioData-contained timestamp/duration information and
+    events.
+    """
+
+    def __init__(self, source: Source) -> None:
+        super().__init__(source.audio_format, source.video_format, source.info)
+
+        self._source = source
+        self._buffer = bytearray()
+        self._exhausted = False
+
+        # Forward duration
+        self._duration = source.duration
+
+    def is_precise(self) -> bool:
+        return True
+
+    # And forward other operations to the underlying source too
+    def acquire(self) -> None:
+        super().acquire()
+        self._source.acquire()
+
+    def release(self) -> None:
+        super().release()
+        self._source.release()
+
+    def seek(self, timestamp: float) -> None:
+        self._buffer.clear()
+        self._exhausted = False
+        self._source.seek(timestamp)
+
+    def get_audio_data(self, num_bytes: int, _compensation_time: float = 0.0) -> Optional[AudioData]:
+        if self._exhausted:
+            return None
+
+        if len(self._buffer) < num_bytes:
+            # Buffer is incapable of fulfilling request, get more
+
+            # Reduce amount of required bytes by buffer length
+            required_bytes = num_bytes - len(self._buffer)
+
+            # Don't bother with super-small requests to something that likely does some form of I/O
+            # Also, intentionally overshoot since some sources may just barely undercut.
+            attempt = next_or_equal_power_of_two(max(4096, required_bytes + 16))
+            for attempt_size in (attempt, attempt * 2, attempt * 8):
+                res = self._source.get_audio_data(attempt_size)
+                if res is None:
+                    self._exhausted = True
+                    break
+
+                self._buffer += res.data
+                if len(self._buffer) >= num_bytes:
+                    # Got enough
+                    break
+            else:
+                # We didn't receive None, but also didn't get enough after requesting more than 10
+                # times of the needed amount. Fake exhaustion in this case.
+                self._exhausted = True
+
+        res = bytes(self._buffer[:num_bytes])
+        del self._buffer[:num_bytes]
+        return AudioData(res, len(res), -1.0, -1.0, [])

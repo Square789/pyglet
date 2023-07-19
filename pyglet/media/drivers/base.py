@@ -53,6 +53,16 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         """Called after the audio driver has been re-initialized."""
         pass
 
+    def set_source(self, source):
+        """Change the player's source for a new one.
+        It must be of the same audio format.
+        Will clear the player, make sure you paused it beforehand.
+        """
+        assert self.source.audio_format == source.audio_format
+
+        self.clear()
+        self.source = weakref.proxy(source)
+
     @abstractmethod
     def play(self):
         """Begin playback."""
@@ -188,16 +198,6 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
     def set_cone_outer_gain(self, cone_outer_gain):
         """See `Player.cone_outer_gain`."""
         pass
-
-    def set_source(self, source):
-        """Change the player's source for a new one.
-        It must be of the same audio format.
-        Will clear the player, make sure you paused it beforehand.
-        """
-        assert self.source.audio_format == source.audio_format
-
-        self.clear()
-        self.source = weakref.proxy(source)
 
 
 class AbstractWorkableAudioPlayer(AbstractAudioPlayer):

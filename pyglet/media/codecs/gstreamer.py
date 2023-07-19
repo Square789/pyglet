@@ -108,6 +108,8 @@ class GStreamerSource(StreamingSource):
     sentinal = object()
 
     def __init__(self, filename, file=None):
+        super().__init__()
+
         self._pipeline = Gst.Pipeline()
 
         msg_handler = _MessageHandler(self)

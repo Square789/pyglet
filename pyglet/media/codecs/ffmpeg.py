@@ -503,6 +503,8 @@ class FFmpegSource(StreamingSource):
     MAX_QUEUE_SIZE = 100
 
     def __init__(self, filename, file=None):
+        super().__init__()
+
         self._packet = None
         self._video_stream = None
         self._audio_stream = None
@@ -520,50 +522,46 @@ class FFmpegSource(StreamingSource):
 
         self._video_stream_index = None
         self._audio_stream_index = None
-        self._audio_format = None
 
         self.img_convert_ctx = POINTER(SwsContext)()
         self.audio_convert_ctx = POINTER(SwrContext)()
 
         file_info = ffmpeg_file_info(self._file)
 
-        self.info = SourceInfo()
-        self.info.title = file_info.title
-        self.info.author = file_info.author
-        self.info.copyright = file_info.copyright
-        self.info.comment = file_info.comment
-        self.info.album = file_info.album
-        self.info.year = file_info.year
-        self.info.track = file_info.track
-        self.info.genre = file_info.genre
+        source_info = SourceInfo()
+        source_info.title = file_info.title
+        source_info.author = file_info.author
+        source_info.copyright = file_info.copyright
+        source_info.comment = file_info.comment
+        source_info.album = file_info.album
+        source_info.year = file_info.year
+        source_info.track = file_info.track
+        source_info.genre = file_info.genre
 
         # Pick the first video and audio streams found, ignore others.
+        audio_format = None
+        video_format = None
         for i in range(file_info.n_streams):
             info = ffmpeg_stream_info(self._file, i)
 
             if isinstance(info, StreamVideoInfo) and self._video_stream is None:
                 stream = ffmpeg_open_stream(self._file, i)
 
-                self.video_format = VideoFormat(
-                    width=info.width,
-                    height=info.height)
+                video_format = VideoFormat(info.width, info.height)
                 if info.sample_aspect_num != 0:
-                    self.video_format.sample_aspect = (
-                            float(info.sample_aspect_num) /
-                            info.sample_aspect_den)
-                self.video_format.frame_rate = (
-                        float(info.frame_rate_num) /
-                        info.frame_rate_den)
+                    video_format.sample_aspect = float(info.sample_aspect_num) / info.sample_aspect_den
+                video_format.frame_rate = float(info.frame_rate_num) / info.frame_rate_den
+
                 self._video_stream = stream
                 self._video_stream_index = i
 
             elif isinstance(info, StreamAudioInfo) and info.sample_bits in (8, 16, 24) and self._audio_stream is None:
                 stream = ffmpeg_open_stream(self._file, i)
 
-                self.audio_format = AudioFormat(
-                    channels=min(2, info.channels),
-                    sample_size=info.sample_bits,
-                    sample_rate=info.sample_rate)
+                audio_format = AudioFormat(channels=min(2, info.channels),
+                                           sample_size=info.sample_bits,
+                                           sample_rate=info.sample_rate)
+
                 self._audio_stream = stream
                 self._audio_stream_index = i
 
@@ -596,16 +594,18 @@ class FFmpegSource(StreamingSource):
                     swresample.swr_free(self.audio_convert_ctx)
                     raise FFmpegException('Cannot create sample rate converter.')
 
+        super().__init__(audio_format, video_format, source_info)
+
         self._packet = ffmpeg_init_packet()
         self._events = []  # They don't seem to be used!
 
         self.audioq = deque()
         # Make queue big enough to accomodate 1.2 sec?
         self._max_len_audioq = self.MAX_QUEUE_SIZE  # Need to figure out a correct amount
-        if self.audio_format:
-             # Buffer 1 sec worth of audio
-             nbytes = ffmpeg_get_audio_buffer_size(self.audio_format)
-             self._audio_buffer = (c_uint8 * nbytes)()
+        if audio_format:
+            # Buffer 1 sec worth of audio
+            nbytes = ffmpeg_get_audio_buffer_size(audio_format)
+            self._audio_buffer = (c_uint8 * nbytes)()
 
         self.videoq = deque()
         self._max_len_videoq = self.MAX_QUEUE_SIZE  # Need to figure out a correct amount
@@ -1091,16 +1091,6 @@ class FFmpegSource(StreamingSource):
                 yield start_time
 
         return max(start_times(streams()))
-
-    @property
-    def audio_format(self):
-        return self._audio_format
-
-    @audio_format.setter
-    def audio_format(self, value):
-        self._audio_format = value
-        if value is None:
-            self.audioq.clear()
 
 
 ffmpeg_init()

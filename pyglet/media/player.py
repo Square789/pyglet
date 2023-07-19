@@ -7,7 +7,7 @@ import pyglet
 from pyglet.gl import GL_TEXTURE_2D
 from pyglet.media import buffered_logger as bl
 from pyglet.media.drivers import get_audio_driver
-from pyglet.media.codecs.base import Source, SourceGroup
+from pyglet.media.codecs.base import PreciseStreamingSource, Source, SourceGroup
 
 _debug = pyglet.options['debug_media']
 
@@ -147,10 +147,19 @@ class Player(pyglet.event.EventDispatcher):
         self._playlists.append(source)
 
         if self.source is None:
-            source = next(self._playlists[0])
-            self._source = source.get_queue_source()
+            self._set_source(next(self._playlists[0]))
 
         self._set_playing(self._playing)
+
+    def _set_source(self, new_source) -> None:
+        if self._source is not None:
+            self._source.seek(0.0)
+            self._source.release()
+
+        if new_source is None:
+            self._source = None
+        else:
+            self._source = new_source.get_queue_source()
 
     def _set_playing(self, playing):
         # stopping = self._playing and not playing
@@ -227,8 +236,7 @@ class Player(pyglet.event.EventDispatcher):
 
         The internal audio player and the texture will be deleted.
         """
-        if self._source:
-            self.source.is_player_source = False
+        self._set_source(None)
         if self._audio_player:
             self._audio_player.delete()
             self._audio_player = None
@@ -246,13 +254,9 @@ class Player(pyglet.event.EventDispatcher):
         self.pause()
         self._timer.reset()
 
-        if self._source:
-            # Reset source to the beginning
-            self.seek(0.0)
-            self.source.is_player_source = False
-
         playlists = self._playlists
         if not playlists:
+            self._set_source(None)
             return
 
         try:
@@ -266,13 +270,12 @@ class Player(pyglet.event.EventDispatcher):
                 new_source = next(self._playlists[0])
 
         if new_source is None:
-            self._source = None
             self.delete()
             self.dispatch_event('on_player_eos')
         else:
             old_audio_format = self._source.audio_format
             old_video_format = self._source.video_format
-            self._source = new_source.get_queue_source()
+            self._set_source(new_source)
 
             if self._audio_player:
                 if old_audio_format == self._source.audio_format:

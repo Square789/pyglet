@@ -46,8 +46,8 @@ class DirectSoundDriver:
         except ValueError:
             pass
 
-    def create_buffer(self, audio_format):
-        return self._buffer_factory.create_buffer(audio_format)
+    def create_buffer(self, audio_format, buffer_size):
+        return self._buffer_factory.create_buffer(audio_format, buffer_size)
 
     def create_listener(self):
         return self.primary_buffer.create_listener()
@@ -61,8 +61,7 @@ class DirectSoundBufferFactory:
         # interface.DirectSoundDriver
         self._native_dsound = weakref.proxy(native_dsound)
 
-    def create_buffer(self, audio_format):
-        buffer_size = int(audio_format.sample_rate * self.default_buffer_size)
+    def create_buffer(self, audio_format, buffer_size):
         wave_format = self._create_wave_format(audio_format)
         buffer_desc = self._create_buffer_desc(wave_format, buffer_size)
         return DirectSoundBuffer(

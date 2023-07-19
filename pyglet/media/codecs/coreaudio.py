@@ -95,9 +95,9 @@ class CoreAudioSource(StreamingSource):
             byref(length)
         ))
 
-        self.audio_format = AudioFormat(channels=self.convert_desc.mChannelsPerFrame,
-                                        sample_size=self.convert_desc.mBitsPerChannel,
-                                        sample_rate=int(self.convert_desc.mSampleRate))
+        super().__init__(AudioFormat(channels=self.convert_desc.mChannelsPerFrame,
+                                     sample_size=self.convert_desc.mBitsPerChannel,
+                                     sample_rate=int(self.convert_desc.mSampleRate)))
 
         self._num_frames = length.value
         self._bytes_per_frame = self.convert_desc.mBytesPerFrame
@@ -129,6 +129,9 @@ class CoreAudioSource(StreamingSource):
         if self._audref:
             err_check(ca.ExtAudioFileDispose(self._audref))
             self._audref = None
+
+    def is_precise(self):
+        return True
 
     def get_audio_data(self, num_bytes, compensation_time=0.0):
         num_frames = c_uint32(num_bytes // self.convert_desc.mBytesPerFrame)

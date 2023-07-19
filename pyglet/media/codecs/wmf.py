@@ -397,6 +397,8 @@ class WMFSource(Source):
     decode_video = True
 
     def __init__(self, filename, file=None):
+        super().__init__()
+
         assert any([self.decode_audio, self.decode_video]), "Source must decode audio, video, or both, not none."
         self._current_audio_sample = None
         self._current_audio_buffer = None

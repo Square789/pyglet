@@ -14,6 +14,8 @@ class WAVEDecodeException(DecodeException):
 
 class WaveSource(StreamingSource):
     def __init__(self, filename, file=None):
+        super().__init__()
+
         if file is None:
             file = open(filename, 'rb')
             self._file = file
@@ -37,6 +39,9 @@ class WaveSource(StreamingSource):
     def __del__(self):
         if hasattr(self, '_file'):
             self._file.close()
+
+    def is_precise(self):
+        return True
 
     def get_audio_data(self, num_bytes, compensation_time=0.0):
         num_frames = max(1, num_bytes // self._bytes_per_frame)

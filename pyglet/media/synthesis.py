@@ -209,9 +209,10 @@ class SynthesisSource(Source):
             An optional Envelope to apply to the waveform.
     """
     def __init__(self, generator, duration, sample_rate=44800, envelope=None):
+        super().__init__(AudioFormat(channels=1, sample_size=16, sample_rate=sample_rate))
+
         self._generator = generator
         self._duration = duration
-        self.audio_format = AudioFormat(channels=1, sample_size=16, sample_rate=sample_rate)
 
         self._envelope = envelope or FlatEnvelope(amplitude=1.0)
         self._envelope_generator = self._envelope.get_generator(sample_rate, duration)
@@ -221,6 +222,9 @@ class SynthesisSource(Source):
         # Maximum offset, aligned to sample:
         self._max_offset = int(self._bytes_per_second * duration) & 0xfffffffe
         self._offset = 0
+
+    def is_precise(self):
+        return True
 
     def get_audio_data(self, num_bytes, compensation_time=0.0):
         """Return at most `num_bytes` bytes of audio data."""
