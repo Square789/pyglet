@@ -263,7 +263,7 @@ class Source:
             bytes although data still remains so that an additional request
             would return additional :class:`.AudioData` / not ``None``.
           - Returns more bytes than requested.
-          - Returns an unaligned amount of bytes.
+          - Returns an unaligned amount of bytes for an aligned request.
 
         If this method returns ``False``, pyglet will wrap the source in an
         alignment-forcing buffer creating additional overhead.
@@ -543,6 +543,9 @@ class StaticMemorySource(Source):
         self._max_offset = len(data)
         self._duration = len(data) / float(audio_format.bytes_per_second)
 
+    def is_precise(self) -> bool:
+        return True
+
     def get_queue_source(self) -> Source:  # Unsure whether this method should exist
         return StaticMemorySource(self._file.getbuffer(), self.audio_format)
 
@@ -570,7 +573,7 @@ class StaticMemorySource(Source):
         offset = self._file.tell()
         timestamp = float(offset) / self.audio_format.bytes_per_second
 
-        data = self._file.read(self.audio_format.align(num_bytes))
+        data = self._file.read(num_bytes)
         if not data:
             return None
 
