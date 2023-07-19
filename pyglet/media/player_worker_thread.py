@@ -19,16 +19,6 @@ class PlayerWorkerThread(threading.Thread):
     provides a notify method to interrupt it as well as a termination method.
     """
 
-    _threads = set()
-
-    # A cross-thread lock that is set before a thread is started and released as soon as it
-    # added itself to `_threads`. Secures against the extremely unlikely, not-reproduced but
-    # probably technically possible case of a thread slipping through as it is unscheduled
-    # before it added itself to `_threads` in favor of the `atexit` callback, causing it to
-    # end up wait on the `_rest_event` forever, which is unclean and may become an actual
-    # problem if these are ever made non-daemonic.
-    _thread_set_lock = threading.Lock()
-
     # Run every 20ms; accurate enough for event dispatching while not hogging too much
     # time updating the players
     _nap_time = 0.020
@@ -42,16 +32,9 @@ class PlayerWorkerThread(threading.Thread):
         self._stopped = False
         self.players: Set[AbstractWorkableAudioPlayer] = set()
 
-    def start(self) -> None:
-        self._thread_set_lock.acquire()
-        super().start()
-
     def run(self) -> None:
         if pyglet.options['debug_trace']:
             pyglet._install_trace()
-
-        self._threads.add(self)
-        self._thread_set_lock.release()
 
         sleep_time = None
 
@@ -75,8 +58,6 @@ class PlayerWorkerThread(threading.Thread):
                 else:
                     # sleep until a player is added
                     sleep_time = None
-
-        self._threads.remove(self)
 
     def stop(self) -> None:
         """Stop the thread and wait for it to terminate.
@@ -133,16 +114,3 @@ class PlayerWorkerThread(threading.Thread):
         if player in self.players:
             with self._operation_lock:
                 self.players.remove(player)
-
-    @classmethod
-    def atexit(cls) -> None:
-        with cls._thread_set_lock:
-            for thread in list(cls._threads):
-                # Create a copy as a thread will remove itself on exit causing a
-                # "size changed during iteration" error.
-                thread.stop()
-        # Can't be 100% sure that all threads are stopped here as it is technically possible that
-        # a thread may just have removed itself from cls._threads as the last action in `run()`
-        # and then was unscheduled; But it will definitely finish soon after anyways.
-
-atexit.register(PlayerWorkerThread.atexit)
