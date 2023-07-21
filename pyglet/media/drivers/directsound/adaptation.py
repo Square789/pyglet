@@ -50,8 +50,9 @@ class DirectSoundAudioPlayer(AbstractWorkableAudioPlayer):
         self.driver = driver
         self._ds_driver = ds_driver
 
-        # Desired play state (may be actually paused due to underrun -- not
-        # implemented yet).
+        # Desired play state. As the DS Buffer is just a circular buffer, it is
+        # not possible to have it stop at an exact position if the source
+        # should lag behind and cause it to underrun.
         self._playing = False
 
         # Indexes into DSound circular buffer.  Complications ensue wrt each

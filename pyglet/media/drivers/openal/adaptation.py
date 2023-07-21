@@ -183,10 +183,16 @@ class OpenALAudioPlayer(AbstractWorkableAudioPlayer):
             if not self._has_underrun and not self.alsource.is_playing:
                 self._has_underrun = True
                 MediaEvent('on_eos').sync_dispatch_to_player(self.player)
-            return
+        else:
+            refilled = False
+            while self._should_refill():
+                self._refill()
+                refilled = True
 
-        while self._should_refill():
-            self._refill()
+            if refilled and not self.alsource.is_playing:
+                # Very unlikely case where the refill was delayed by so much the
+                # source underran and stopped. If it did, restart it.
+                self.alsource.play()
 
     def _should_refill(self) -> bool:
         if self._pyglet_source_exhausted:
