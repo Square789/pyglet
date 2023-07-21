@@ -754,3 +754,19 @@ class PreciseStreamingSource(StreamingSource):
         res = bytes(self._buffer[:num_bytes])
         del self._buffer[:num_bytes]
         return AudioData(res, len(res), -1.0, -1.0, [])
+
+    def get_next_video_timestamp(self) -> Optional[float]:
+        return self._source.get_next_video_timestamp()
+
+    def get_next_video_frame(self) -> Optional['AbstractImage']:
+        return self._source.get_next_video_frame()
+
+    def save(self,
+             filename: str,
+             file: Optional[BinaryIO] = None,
+             encoder: Optional['MediaEncoder'] = None) -> None:
+        self._source.save(filename, file, encoder)
+
+    def delete(self) -> None:
+        self._source.delete()
+        self._buffer.clear()
