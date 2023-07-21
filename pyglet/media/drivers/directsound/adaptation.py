@@ -93,12 +93,12 @@ class DirectSoundAudioPlayer(AbstractWorkableAudioPlayer):
         # to refill most of that empty space up again.
         self._tolerable_empty_space = min(1048576, buffer_size // 3)
 
-    def __del__(self):
-        # We decrease the IDirectSound refcount
-        self.driver._ds_driver._native_dsound.Release()
-
     def delete(self):
         self.driver.worker.remove(self)
+        self._ds_buffer.delete()
+        # Decrease IDirectSound refcount.
+        # Counteracts AddRef in `create_audio_player`
+        self.driver._ds_driver._native_dsound.Release()
 
     def play(self):
         assert _debug('DirectSound play')
@@ -147,6 +147,7 @@ class DirectSoundAudioPlayer(AbstractWorkableAudioPlayer):
         # Source exhausted, just check whether we hit the end
         if not self._has_underrun and self._play_cursor > self._eos_cursor:
             self._has_underrun = True
+            assert _debug("DirectSoundAudioPlayer: Dispatching eos")
             MediaEvent('on_eos').sync_dispatch_to_player(self.player)
 
         # While we are still playing / waiting for the on_eos to be dispatched for
@@ -295,9 +296,6 @@ class DirectSoundDriver(AbstractAudioDriver):
         self.worker = PlayerWorkerThread()
         self.worker.start()
 
-    def __del__(self):
-        self.delete()
-
     def create_audio_player(self, source, player):
         assert self._ds_driver is not None
         # We increase IDirectSound refcount for each AudioPlayer instantiated
@@ -313,10 +311,10 @@ class DirectSoundDriver(AbstractAudioDriver):
 
     def delete(self):
         assert _debug("Deleting DirectSoundDriver")
-        if hasattr(self, 'worker'):
-            self.worker.stop()
-        # Make sure the _ds_listener is deleted before the _ds_driver
-        self._ds_listener = None
+        self.worker.stop()
+        # Destroy listener before destroying driver
+        self._ds_listener.delete()
+        self._ds_driver.delete()
         assert _debug("DirectSoundDriver deleted.")
 
 

@@ -28,17 +28,17 @@ class OpenALDriver(AbstractAudioDriver):
         self.worker = PlayerWorkerThread()
         self.worker.start()
 
-    def __del__(self) -> None:
-        assert _debug("Delete OpenALDriver")
-        self.delete()
-
     def create_audio_player(self, source: 'Source', player: 'Player') -> 'OpenALAudioPlayer':
         assert self.device is not None, "Device was closed"
         return OpenALAudioPlayer(self, source, player)
 
     def delete(self) -> None:
+        assert _debug("Delete OpenALDriver")
         self.worker.stop()
-        self.context = None
+        self.context.delete_sources()
+        self.device.buffer_pool.delete()
+        self.context.delete()
+        self.device.close()
 
     def have_version(self, major: int, minor: int) -> bool:
         return (major, minor) <= self.get_version()
@@ -62,9 +62,6 @@ class OpenALListener(AbstractListener):
     def __init__(self, driver: 'OpenALDriver') -> None:
         self._driver = weakref.proxy(driver)
         self._al_listener = interface.OpenALListener()
-
-    def __del__(self) -> None:
-        assert _debug("Delete OpenALListener")
 
     def _set_volume(self, volume: float) -> None:
         self._al_listener.gain = volume
@@ -127,6 +124,7 @@ class OpenALAudioPlayer(AbstractWorkableAudioPlayer):
 
     def delete(self) -> None:
         self.driver.worker.remove(self)
+        self.alsource.delete()
         self.alsource = None
 
     def play(self) -> None:
@@ -182,6 +180,7 @@ class OpenALAudioPlayer(AbstractWorkableAudioPlayer):
         if self._pyglet_source_exhausted:
             if not self._has_underrun and not self.alsource.is_playing:
                 self._has_underrun = True
+                assert _debug("OpenALAudioPlayer: Dispatching eos")
                 MediaEvent('on_eos').sync_dispatch_to_player(self.player)
         else:
             refilled = False
