@@ -1,4 +1,3 @@
-import atexit
 import threading
 import time
 from typing import TYPE_CHECKING, Set
@@ -40,13 +39,13 @@ class PlayerWorkerThread(threading.Thread):
 
         while True:
             assert _debug(
-                'PlayerWorkerThread: Going to sleep ' +
+                'PlayerWorkerThread.run: Going to sleep ' +
                 ('indefinitely; no active players' if sleep_time is None else f'for {sleep_time}')
             )
             self._rest_event.wait(sleep_time)
             self._rest_event.clear()
 
-            assert _debug(f'PlayerWorkerThread: woke up @{time.time()}')
+            assert _debug(f'PlayerWorkerThread.run: woke up @{time.time()}')
             if self._stopped:
                 break
 
@@ -58,6 +57,8 @@ class PlayerWorkerThread(threading.Thread):
                 else:
                     # sleep until a player is added
                     sleep_time = None
+
+        assert _debug(f'PlayerWorkerThread.run: exiting')
 
     def stop(self) -> None:
         """Stop the thread and wait for it to terminate.
