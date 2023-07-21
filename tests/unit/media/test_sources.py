@@ -181,18 +181,37 @@ class SourceTestCase(unittest.TestCase):
         self.assertIsInstance(animation, pyglet.image.Animation)
         self.assertEqual(len(animation.frames), 0)
 
-
-class StreamingSourceTestCase(unittest.TestCase):
     def test_can_queue_only_once(self):
         source = StreamingSource()
         self.assertFalse(source.is_player_source)
 
         ret = source.get_queue_source()
-        self.assertIs(ret, source)
+        self.assertTrue(ret.is_player_source)
         self.assertTrue(source.is_player_source)
 
         with self.assertRaises(MediaException):
             source.get_queue_source()
+
+        ret.release()
+        self.assertFalse(ret.is_player_source)
+        self.assertFalse(source.is_player_source)
+
+        ret = source.get_queue_source()
+        with self.assertRaises(MediaException):
+            ret.get_queue_source()
+
+    def test_precise_queue_source(self):
+        source = Source()
+        with mock.patch.object(source, "is_precise", lambda: True):
+            qsource = source.get_queue_source()
+            self.assertIs(qsource, source)
+            self.assertTrue(qsource.is_player_source)
+
+    def test_nonprecise_queue_source(self):
+        source = Source()
+        qsource = source.get_queue_source()
+        self.assertIsNot(qsource, source)
+        self.assertIsInstance(qsource, PreciseStreamingSource)
 
 
 class StaticSourceTestCase(unittest.TestCase):
@@ -213,10 +232,10 @@ class StaticSourceTestCase(unittest.TestCase):
             return AudioData(data, len(data), 0.0, 1.0, ())
         self.mock_queue_source.get_audio_data.side_effect = _get_audio_data
 
-        type(self.mock_queue_source).audio_format = mock.PropertyMock(return_value=AudioFormat(channels, bitrate, 11025))
-        type(self.mock_queue_source).video_format = mock.PropertyMock(return_value=None)
-        type(self.mock_source).audio_format = mock.PropertyMock(return_value=AudioFormat(channels, bitrate, 11025))
-        type(self.mock_source).video_format = mock.PropertyMock(return_value=None)
+        self.mock_queue_source.audio_format = AudioFormat(channels, bitrate, 11025)
+        self.mock_queue_source.video_format = None
+        self.mock_source.audio_format = AudioFormat(channels, bitrate, 11025)
+        self.mock_source.video_format = None
 
 
     def test_reads_all_data_on_init(self):
@@ -233,7 +252,7 @@ class StaticSourceTestCase(unittest.TestCase):
 
     def test_video_not_supported(self):
         self.create_valid_mock_source()
-        type(self.mock_queue_source).video_format = mock.PropertyMock(return_value=VideoFormat(800, 600))
+        self.mock_queue_source.video_format = VideoFormat(800, 600)
 
         with self.assertRaises(NotImplementedError):
             static_source = StaticSource(self.mock_source)
@@ -278,14 +297,6 @@ class StaticSourceTestCase(unittest.TestCase):
         returned_audio_data = queue_source.get_audio_data(len(self.mock_audio_data))
         self.assertEqual(returned_audio_data.length % 2, 0, 'Must seek and return aligned to 2 byte chunks')
 
-    def test_consume_aligned_to_sample_size_2_bytes(self):
-        self.create_valid_mock_source(bitrate=16, channels=1)
-        static_source = StaticSource(self.mock_source)
-
-        queue_source = static_source.get_queue_source()
-        returned_audio_data = queue_source.get_audio_data(1000*2+1)
-        self.assertEqual(returned_audio_data.length % 2, 0, 'Must return aligned to 2 byte chunks')
-
     def test_seek_aligned_to_sample_size_4_bytes(self):
         self.create_valid_mock_source(bitrate=16, channels=2)
         static_source = StaticSource(self.mock_source)
@@ -295,28 +306,20 @@ class StaticSourceTestCase(unittest.TestCase):
         returned_audio_data = queue_source.get_audio_data(len(self.mock_audio_data))
         self.assertEqual(returned_audio_data.length % 4, 0, 'Must seek and return aligned to 4 byte chunks')
 
-    def test_consume_aligned_to_sample_size_4_bytes(self):
-        self.create_valid_mock_source(bitrate=16, channels=2)
-        static_source = StaticSource(self.mock_source)
-
-        queue_source = static_source.get_queue_source()
-        returned_audio_data = queue_source.get_audio_data(1000*4+3)
-        self.assertEqual(returned_audio_data.length % 4, 0, 'Must return aligned to 4 byte chunks')
-
     def test_empty_source(self):
         """Test that wrapping an empty source does not cause trouble."""
         self.mock_source = mock.MagicMock()
         self.mock_queue_source = self.mock_source.get_queue_source.return_value
 
-        type(self.mock_queue_source).audio_format = mock.PropertyMock(return_value=None)
-        type(self.mock_queue_source).video_format = mock.PropertyMock(return_value=None)
-        type(self.mock_source).audio_format = mock.PropertyMock(return_value=None)
-        type(self.mock_source).video_format = mock.PropertyMock(return_value=None)
+        self.mock_queue_source.audio_format = None
+        self.mock_queue_source.video_format = None
+        self.mock_source.audio_format = None
+        self.mock_source.video_format = None
 
         static_source = StaticSource(self.mock_source)
 
         self.assertEqual(static_source.duration, 0.)
-        self.assertIsNone(static_source.get_queue_source())
+        self.assertIsInstance(static_source.get_queue_source(), DeadSource)
 
     def test_not_directly_queueable(self):
         """A StaticSource cannot be played directly. Its queue source returns a playable object."""
@@ -338,3 +341,57 @@ class StaticSourceTestCase(unittest.TestCase):
         self.assertIsNone(no_more_audio_data)
 
 
+class SourceGroupTestCase(unittest.TestCase):
+    def test_empty(self):
+        group = SourceGroup()
+        self.assertIsNone(group.get_audio_data(2048))
+
+    def test_functionality(self):
+        fake_data = ((b'a', 1000, 0.5), (b'b', 40000, 2.0), (b'c', 20000, 4.0), (b'd', 9992, 4.0))
+        audio_data = [AudioData(b * l, l, -1.0, d, []) for b, l, d in fake_data]
+        audio_data[0].timestamp = 1.23
+
+        expected_data = b''.join(d * l for d, l, _ in fake_data)
+        expected_duration = sum(d for _, _, d in fake_data)
+        total_length = len(expected_data)
+
+        sources = [mock.MagicMock(audio_format=AudioFormat(2, 8, 11025)) for _ in range(4)]
+        exhausted = [False] * 4
+
+        for i, mock_source in enumerate(sources):
+            def _get_audio_data(_, j=i):
+                if exhausted[j]:
+                    return None
+                exhausted[j] = True
+                return audio_data[j]
+
+            mock_source.duration = fake_data[i][2]
+            mock_source.get_audio_data.side_effect = _get_audio_data
+            mock_source.get_queue_source.return_value = mock_source
+
+        group = SourceGroup()
+        for mock_source in sources:
+            group.add(mock_source)
+
+        ret_data = group.get_audio_data(total_length)
+        self.assertEqual(expected_data, ret_data.data)
+        self.assertAlmostEqual(ret_data.timestamp, 1.23)
+        self.assertAlmostEqual(ret_data.duration, expected_duration)
+
+    def test_inequal_audio_format(self):
+        source_a = mock.Mock(audio_format=AudioFormat(1, 8, 44100), duration=None)
+        source_b = mock.Mock(audio_format=AudioFormat(2, 16, 44100), duration=None)
+        source_a.get_queue_source.return_value = source_a
+        source_b.get_queue_source.return_value = source_b
+
+        group = SourceGroup()
+        group.add(source_a)
+        self.assertEqual(group.audio_format, source_a.audio_format)
+        with self.assertRaises(MediaException):
+            group.add(source_b)
+
+    def test_dead_source(self):
+        group = SourceGroup()
+        source = DeadSource()
+        group.add(source)
+        self.assertIsNone(group.get_audio_data(2048))

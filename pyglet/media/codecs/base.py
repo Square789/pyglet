@@ -245,55 +245,6 @@ class Source:
         """
         return self._duration
 
-    def is_precise(self) -> bool:
-        """bool: Whether this source is considered precise.
-
-        ``x`` bytes on source ``s`` are considered aligned if
-        ``x % s.audio_format.bytes_per_frame == 0``, so there'd be no partial
-        audio frame in the returned data.
-
-        A source is precise if - for an aligned request of ``x`` bytes - it
-        returns:
-          - If ``x`` or more bytes are available, ``x`` bytes.
-          - If not enough bytes are available anymore, ``r`` bytes where
-            ``r < x`` and ``r`` is aligned.
-
-        A source is **not** precise if it does any of these:
-          - Returns less than ``x`` bytes for an aligned request of ``x``
-            bytes although data still remains so that an additional request
-            would return additional :class:`.AudioData` / not ``None``.
-          - Returns more bytes than requested.
-          - Returns an unaligned amount of bytes for an aligned request.
-
-        If this method returns ``False``, pyglet will wrap the source in an
-        alignment-forcing buffer creating additional overhead.
-
-        If this method is overridden to return ``True``, the step above is
-        skipped and pyglet's internals are guaranteed to never make unaligned
-        requests, or requests of less than 1024 bytes.
-
-        If this method is overridden to return ``True`` although the source
-        does not comply with the requirements above, audio playback may be
-        negatively impacted.
-
-        :Returns:
-            bool: Whether the source is precise.
-        """
-        return False
-
-    def acquire(self) -> None:
-        """Acquire the source. This is used internally to prevent the same
-        source from being queued on multiple player accidentally.
-        """
-        if self.is_player_source:
-            raise MediaException('This source is already queued on a player.')
-        self.is_player_source = True
-
-    def release(self) -> None:
-        """Release the source to free it up for usage on other players again.
-        """
-        self.is_player_source = False
-
     def play(self) -> None:
         """Play the source.
 
@@ -399,7 +350,54 @@ class Source:
             import pyglet.media.codecs
             return pyglet.media.codecs.registry.encode(self, filename, file)
 
-    # Internal methods that Player calls on the source:
+    def is_precise(self) -> bool:
+        """bool: Whether this source is considered precise.
+
+        ``x`` bytes on source ``s`` are considered aligned if
+        ``x % s.audio_format.bytes_per_frame == 0``, so there'd be no partial
+        audio frame in the returned data.
+
+        A source is precise if - for an aligned request of ``x`` bytes - it
+        returns:
+          - If ``x`` or more bytes are available, ``x`` bytes.
+          - If not enough bytes are available anymore, ``r`` bytes where
+            ``r < x`` and ``r`` is aligned.
+
+        A source is **not** precise if it does any of these:
+          - Returns less than ``x`` bytes for an aligned request of ``x``
+            bytes although data still remains so that an additional request
+            would return additional :class:`.AudioData` / not ``None``.
+          - Returns more bytes than requested.
+          - Returns an unaligned amount of bytes for an aligned request.
+
+        If this method returns ``False``, pyglet will wrap the source in an
+        alignment-forcing buffer creating additional overhead.
+
+        If this method is overridden to return ``True``, the step above is
+        skipped and pyglet's internals are guaranteed to never make unaligned
+        requests, or requests of less than 1024 bytes.
+
+        If this method is overridden to return ``True`` although the source
+        does not comply with the requirements above, audio playback may be
+        negatively impacted.
+
+        :Returns:
+            bool: Whether the source is precise.
+        """
+        return False
+
+    def acquire(self) -> None:
+        """Acquire the source. This is used internally to prevent the same
+        source from being queued on multiple player accidentally.
+        """
+        if self.is_player_source:
+            raise MediaException('This source is already queued on a player.')
+        self.is_player_source = True
+
+    def release(self) -> None:
+        """Release the source to free it up for usage on other players again.
+        """
+        self.is_player_source = False
 
     def seek(self, timestamp: float) -> None:
         """Seek to given timestamp.
@@ -410,12 +408,22 @@ class Source:
         """
         raise CannotSeekException()
 
-    def get_queue_source(self) -> 'Source':
-        """Return the ``Source`` to be used as the queue source for a player.
+    def get_queue_source(self, *, imprecise_ok: bool = False) -> 'Source':
+        """Return the ``Source`` to be used as the source for a player.
 
-        Default implementation returns self.
+        Default implementation returns ``self`` if this source is precise as
+        specified by :method:`is_precise` or if the ``imprecise_ok`` argument
+        is given. Otherwise, a new :class:`PreciseStreamingSource` wrapping
+        this source is returned.
+
+        The returned source is acquired.
+
+        Returns:
+            :class:`Source`
         """
-        return self
+        r = self if imprecise_ok or self.is_precise() else PreciseStreamingSource(self)
+        r.acquire()
+        return r
 
     def get_audio_data(self, num_bytes: int, compensation_time: float = 0.0) -> Optional[AudioData]:
         """Get next packet of audio data.
@@ -433,31 +441,34 @@ class Source:
         """
         return None
 
-
-class StreamingSource(Source):
-    """A source that is decoded as it is being played.
-
-    The source can only be played once at a time on any
-    :class:`~pyglet.media.player.Player`.
-    """
-
-    def get_queue_source(self) -> 'StreamingSource':
-        """Return the ``Source`` to be used as the source for a player.
-
-        Default implementation returns ``self`` if this source is precise as
-        specified by :method:`is_precise`. Otherwise, a new
-        :class:`PreciseStreamingSource` wrapping this source is returned.
-
-        Returns:
-            :class:`.Source`
-        """
-        r = self if self.is_precise() else PreciseStreamingSource(self)
-        r.acquire()
-        return r
-
     def delete(self) -> None:
-        """Release the resources held by this StreamingSource."""
+        """Release the resources held by this Source."""
         pass
+
+
+StreamingSource = Source
+
+
+class DeadSource(Source):
+    """A source with a duration of 0, providing no audio data at all."""
+    def __init__(self) -> None:
+        super().__init__()
+        self._duration = 0.0
+
+    def is_precise(self) -> bool:
+        return True
+
+    def acquire(self) -> None:
+        pass
+
+    def release(self) -> None:
+        pass
+
+    def seek(self, timestamp: float) -> None:
+        pass
+
+    def get_audio_data(self, _nb: int, _ct: float = 0.0) -> Optional[AudioData]:
+        return None
 
 
 class StaticSource(Source):
@@ -474,17 +485,17 @@ class StaticSource(Source):
     """
 
     def __init__(self, source: Source) -> None:
+        source = source.get_queue_source(imprecise_ok=True)
         super().__init__(source.audio_format)
 
         if source.video_format:
             raise NotImplementedError('Static sources are not supported for video.')
 
-        if not self.audio_format:
+        if self.audio_format is None:
             self._data = b""
             self._duration = 0.
             return
 
-        source.acquire()
         # Arbitrary: number of bytes to request at a time.
         buffer_size = 1 << 20  # 1 MB
 
@@ -502,8 +513,14 @@ class StaticSource(Source):
         self._data = data.getvalue()
         self._duration = len(self._data) / self.audio_format.bytes_per_second
 
-    def get_queue_source(self) -> 'StaticMemorySource':
-        return StaticMemorySource(self._data, self.audio_format)
+    def get_queue_source(self, *, imprecise_ok: bool = False) -> Union['StaticMemorySource', DeadSource]:
+        # Ignore imprecise_ok arg, both of these are precise.
+        if self.audio_format is None:
+            r = DeadSource()
+        else:
+            r = StaticMemorySource(self._data, self.audio_format)
+        r.acquire()
+        return r
 
     def acquire(self) -> None:
         raise RuntimeError('StaticSource cannot be acquired')
@@ -546,8 +563,12 @@ class StaticMemorySource(Source):
     def is_precise(self) -> bool:
         return True
 
-    def get_queue_source(self) -> Source:  # Unsure whether this method should exist
-        return StaticMemorySource(self._file.getbuffer(), self.audio_format)
+    def get_queue_source(self, *, imprecise_ok: bool = False) -> 'StaticMemorySource':
+        # StaticMemorySources used to inherit StaticSources, this exists to
+        # keep the behavior.
+        r = StaticMemorySource(self._file.getbuffer(), self.audio_format)
+        r.acquire()
+        return r
 
     def seek(self, timestamp: float) -> None:
         """Seek to given timestamp.
@@ -581,7 +602,7 @@ class StaticMemorySource(Source):
         return AudioData(data, len(data), timestamp, duration, [])
 
 
-class SourceGroup:
+class SourceGroup(Source):
     """Group of like sources to allow gapless playback.
 
     Seamlessly read data from a group of sources to allow for
@@ -590,40 +611,43 @@ class SourceGroup:
     """
 
     def __init__(self) -> None:
+        super().__init__()
+
         self.audio_format = None
         self.video_format = None
-        self.duration = 0.0
+        self._duration = 0.0
+
         self._timestamp_offset = 0.0
-        self._dequeued_durations = []
-        self._sources = []
+        self._sources: List[Source] = []
 
     def seek(self, time: float) -> None:
         if self._sources:
             self._sources[0].seek(time)
 
     def add(self, source: Source) -> None:
-        self.audio_format = self.audio_format or source.audio_format
-        source = source.get_queue_source()
-        assert (source.audio_format == self.audio_format), "Sources must share the same audio format."
-        self._sources.append(source)
-        self.duration += source.duration
+        qsource = source.get_queue_source()
+        if self.audio_format is None:
+            self.audio_format = qsource.audio_format
+        elif self.audio_format != qsource.audio_format:
+            raise MediaException("Sources in SourceGroup must share the same audio format.")
+
+        self._sources.append(qsource)
+        if source.duration is not None:
+            self._duration += source.duration
 
     def has_next(self) -> bool:
         return len(self._sources) > 1
 
-    def get_queue_source(self) -> 'SourceGroup':
-        return self
-
     def _advance(self) -> None:
-        if self._sources:
-            self._timestamp_offset += self._sources[0].duration
-            self._dequeued_durations.insert(0, self._sources[0].duration)
-            old_source = self._sources.pop(0)
-            self.duration -= old_source.duration
+        if not self._sources:
+            return
 
-            if isinstance(old_source, StreamingSource):
-                old_source.delete()
-                del old_source
+        old_source = self._sources.pop(0)
+        self._timestamp_offset += old_source.duration
+        if old_source.duration is not None:
+            self._duration -= old_source.duration
+
+        old_source.release()
 
     def get_audio_data(self, num_bytes: int, compensation_time: float = 0.0) -> Optional[AudioData]:
         """Get next audio packet.
@@ -639,20 +663,24 @@ class SourceGroup:
         if not self._sources:
             return None
 
-        buffer = b""
+        buffer = bytearray()
         duration = 0.0
-        timestamp = 0.0
+        timestamp = None
 
-        while len(buffer) < num_bytes and self._sources:
+        while self._sources and len(buffer) < num_bytes:
             audiodata = self._sources[0].get_audio_data(num_bytes)
             if audiodata:
+                if timestamp is None:
+                    timestamp = audiodata.timestamp
                 buffer += audiodata.data
                 duration += audiodata.duration
-                timestamp += self._timestamp_offset
             else:
                 self._advance()
 
-        return AudioData(buffer, len(buffer), timestamp, duration, [])
+        if not buffer:
+            return None
+
+        return AudioData(bytes(buffer), len(buffer), timestamp, duration, [])
 
 
 class PreciseStreamingSource(StreamingSource):
