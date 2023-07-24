@@ -97,6 +97,7 @@ if __name__ == '__main__':
                  '/usr/include/pulse/version.h',
                  '/usr/include/pulse/error.h',
                  '/usr/include/pulse/operation.h',
+                 '/usr/include/pulse/proplist.h',
                  '/usr/include/pulse/channelmap.h',
                  '/usr/include/pulse/volume.h',
                  '/usr/include/pulse/xmalloc.h',
