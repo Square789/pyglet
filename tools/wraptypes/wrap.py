@@ -14,8 +14,10 @@ __docformat__ = 'restructuredtext'
 __version__ = '$Id$'
 
 from ctypesparser import *
+
 import textwrap
 import sys
+
 
 class CtypesWrapper(CtypesParser, CtypesTypeVisitor):
     file=None

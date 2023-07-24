@@ -18,7 +18,10 @@ from __future__ import print_function
 __docformat__ = 'restructuredtext'
 __version__ = '$Id$'
 
-import cPickle
+try:
+    import cPickle
+except ImportError as e:
+    import pickle as cPickle
 import operator
 import os.path
 import re
@@ -503,7 +506,7 @@ def p_multiplicative_expression(p):
     else:
         p[0] = BinaryExpressionNode({
             '*': operator.mul,
-            '/': operator.div,
+            '/': operator.truediv,
             '%': operator.mod}[p[2]], p[2], p[1], p[3])
 
 def p_additive_expression(p):

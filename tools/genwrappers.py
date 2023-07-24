@@ -7,19 +7,25 @@ from __future__ import print_function
 __docformat__ = 'restructuredtext'
 __version__ = '$Id$'
 
-from wraptypes.wrap import main as wrap
 import os.path
+import subprocess
 import sys
 
 import pyglet
 pyglet.options['shadow_window'] = False
 
+
+def wrap(*args):
+    subprocess.run((sys.executable,) + args)
+
+
 if __name__ == '__main__':
     if not os.path.exists('pyglet/window'):
-        assert False, 'Run with CWD = trunk root.'
+        raise RuntimeError('Run with CWD = trunk root')
+
     names = sys.argv[1:]
     if pyglet.compat_platform.startswith('linux'):
-        if 'xlib' in names:    
+        if 'xlib' in names:
             wrap('tools/wraptypes/wrap.py',
                  '-opyglet/libs/x11/xlib.py',
                  '-lX11',

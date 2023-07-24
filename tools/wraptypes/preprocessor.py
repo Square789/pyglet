@@ -20,9 +20,13 @@ __version__ = '$Id$'
 
 import operator
 import os.path
-import cPickle
+try:
+    import cPickle
+except ImportError as e:
+    import pickle as cPickle
 import re
 import sys
+from ast import literal_eval
 
 import lex
 from lex import TOKEN
@@ -74,7 +78,8 @@ class StringLiteral(str):
     def __new__(cls, value):
         assert value[0] == '"' and value[-1] == '"'
         # Unescaping probably not perfect but close enough.
-        value = value[1:-1].decode('string_escape')
+        # value = value[1:-1].decode('string_escape')
+        value = literal_eval(value)
         return str.__new__(cls, value)
 
 class SystemHeaderName(str):
@@ -891,7 +896,7 @@ class ConstantExpressionGrammar(Grammar):
         else:
             p[0] = BinaryExpressionNode({
                 '*': operator.mul,
-                '/': operator.div,
+                '/': operator.truediv,
                 '%': operator.mod}[p[2]], p[2], p[1], p[3])
 
     def p_additive_expression(self, p):
@@ -1090,7 +1095,7 @@ class PreprocessorParser(yacc.Parser):
         path = Popen('gcc -print-file-name=include',
                      shell=True, stdout=PIPE).communicate()[0].strip()
         if path:
-            self.include_path.append(path)
+            self.include_path.append(path.decode("utf-8"))
 
     def add_cpp_search_path(self):
         from subprocess import Popen, PIPE
@@ -1100,14 +1105,14 @@ class PreprocessorParser(yacc.Parser):
         finally:
             os.remove('test.h')
         if output:
-            output = output.split('\n')
-            while output and not '#include <...>' in output[0]:
+            output = output.split(b'\n')
+            while output and not b'#include <...>' in output[0]:
                 print(('Skipping:', output[0]))
                 del output[0]
             if output:
                 del output[0]  # Remove start line
-                while output and not 'End of search list' in output[0]:
-                    self.include_path.append(output[0].strip())
+                while output and not b'End of search list' in output[0]:
+                    self.include_path.append(output[0].strip().decode("utf-8"))
                     print(('Adding:', output[0].strip()))
                     del output[0]
 
