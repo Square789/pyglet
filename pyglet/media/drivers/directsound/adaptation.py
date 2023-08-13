@@ -204,7 +204,7 @@ class DirectSoundAudioPlayer(AbstractWorkableAudioPlayer):
         else:
             audio_size = min(region_size, audio_data.length)
             self._possible_eos_cursor = self._write_cursor + audio_size
-            raw_data = audio_data.data
+            audio_ptr = audio_data.pointer
 
         assert _debug(f'Writing {region_size}B ({audio_size}B data, {region_size - audio_size}B silence)')
 
@@ -221,13 +221,13 @@ class DirectSoundAudioPlayer(AbstractWorkableAudioPlayer):
 
         if audio_size < a1_size:
             if audio_size > 0:
-                ctypes.memmove(write_ptr.audio_ptr_1, raw_data, audio_size)
+                ctypes.memmove(write_ptr.audio_ptr_1, audio_ptr, audio_size)
             ctypes.memset(write_ptr.audio_ptr_1.value + audio_size, s, a1_size - audio_size)
         else:
             if a1_size > 0:
-                ctypes.memmove(write_ptr.audio_ptr_1, raw_data, a1_size)
+                ctypes.memmove(write_ptr.audio_ptr_1, audio_ptr, a1_size)
             if write_ptr.audio_ptr_2 and (a2_audio := (audio_size - a1_size)) > 0:
-                ctypes.memmove(write_ptr.audio_ptr_2, raw_data[a1_size:], a2_audio)
+                ctypes.memmove(write_ptr.audio_ptr_2, audio_ptr + a1_size, a2_audio)
                 a2_silence -= a2_audio
         if write_ptr.audio_ptr_2 and a2_silence > 0:
             ctypes.memset(write_ptr.audio_ptr_2.value + (a2_size - a2_silence), s, a2_silence)

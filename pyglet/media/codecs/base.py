@@ -1,3 +1,4 @@
+import ctypes
 import io
 from typing import TYPE_CHECKING, BinaryIO, List, Optional, Union
 
@@ -5,7 +6,6 @@ from pyglet.media.exceptions import MediaException, CannotSeekException
 from pyglet.util import next_or_equal_power_of_two
 
 if TYPE_CHECKING:
-    import ctypes
     from pyglet.image import AbstractImage
     from pyglet.image.animation import Animation
     from pyglet.media.codecs import MediaEncoder
@@ -113,63 +113,52 @@ class AudioData:
             this audio packet.
     """
 
-    __slots__ = 'data', 'length', 'timestamp', 'duration', 'events'
+    __slots__ = 'data', 'length', 'timestamp', 'duration', 'events', 'pointer', '_bytes_data'
 
     def __init__(self,
-                 data: Union[bytes, 'ctypes.Array'],
+                 data: Union[bytes, ctypes.Array],
                  length: int,
-                 timestamp: float,
-                 duration: float,
-                 events: List['MediaEvent']) -> None:
+                 timestamp: float = -1.0,
+                 duration: float = -1.0,
+                 events: Optional[List['MediaEvent']] = None) -> None:
+
+        if isinstance(data, bytes):
+            # bytes are treated specially by ctypes and can be cast to a void pointer, get
+            # their content's address like this
+            self.pointer = ctypes.cast(data, ctypes.c_void_p).value
+            self._bytes_data = data
+        elif isinstance(data, ctypes.Array):
+            self.pointer = ctypes.addressof(data)
+        else:
+            try:
+                self.pointer = ctypes.addressof(ctypes.c_int.from_buffer(data))
+            except TypeError:
+                raise TypeError("Unsupported AudioData type.")
+        #       try:
+        #           self.pointer = ctypes.addressof(ctypes.c_int.from_buffer_copy(data))
+        #       except TypeError:
+        #           raise TypeError("Unsupported AudioData type.")
+
         self.data = data
+        # In any case, `data` will support the buffer protocol by delivering at least
+        # a readable buffer.
+
         self.length = length
         self.timestamp = timestamp
         self.duration = duration
-        self.events = events
+        self.events = [] if events is None else events
 
-    def __eq__(self, other) -> bool:
-        if isinstance(other, AudioData):
-            return (self.data == other.data and
-                    self.length == other.length and
-                    self.timestamp == other.timestamp and
-                    self.duration == other.duration and
-                    self.events == other.events)
-        return NotImplemented
+        self._bytes_data = None
 
-    def consume(self, num_bytes: int, audio_format: AudioFormat) -> None:
-        """Remove some data from the beginning of the packet.
-
-        All events are cleared.
-
-        Args:
-            num_bytes (int): The number of bytes to consume from the packet.
-            audio_format (:class:`.AudioFormat`): The packet audio format.
-        """
-        self.events = ()
-        if num_bytes >= self.length:
-            self.data = None
-            self.length = 0
-            self.timestamp += self.duration
-            self.duration = 0.
-            return
-        elif num_bytes == 0:
-            return
-
-        self.data = self.data[num_bytes:]
-        self.length -= num_bytes
-        self.duration -= num_bytes / audio_format.bytes_per_second
-        self.timestamp += num_bytes / audio_format.bytes_per_second
-
-    def get_string_data(self) -> bytes:
-        """Return data as a bytestring.
-
-        Returns:
-            bytes: Data as a (byte)string.
-        """
-        if self.data is None:
-            return b''
-
-        return memoryview(self.data).tobytes()[:self.length]
+    # def __eq__(self, other) -> bool:
+    #     raise RuntimeError("AudioData compared?")
+    #     if isinstance(other, AudioData):
+    #         return (self.data == other.data and
+    #                 self.length == other.length and
+    #                 self.timestamp == other.timestamp and
+    #                 self.duration == other.duration and
+    #                 self.events == other.events)
+    #     return NotImplemented
 
 
 class SourceInfo:
@@ -506,7 +495,7 @@ class StaticSource(Source):
             audio_data = source.get_audio_data(buffer_size)
             if audio_data is None:
                 break
-            data.write(audio_data.get_string_data())
+            data.write(audio_data.data)
 
         source.release()
 

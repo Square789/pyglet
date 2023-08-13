@@ -407,9 +407,8 @@ class OpenALBuffer(OpenALObject):
             self._check_error('Error deleting buffer.')
             self.al_name = None
 
-    def data(self, audio_data, audio_format, length=None):
+    def data(self, audio_data_ptr, audio_format, length):
         assert self.is_valid
-        length = length or audio_data.length
 
         try:
             al_format = self._format_map[(audio_format.channels, audio_format.sample_size)]
@@ -418,7 +417,7 @@ class OpenALBuffer(OpenALObject):
 
         al.alBufferData(self.al_name,
                         al_format,
-                        audio_data.data,
+                        audio_data_ptr,
                         length,
                         audio_format.sample_rate)
         self._check_error('Failed to add data to buffer.')
