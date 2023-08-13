@@ -14,6 +14,8 @@ Despite the warning up there, this file has been manually modified:
   associated enum have been copypasted over from a different run of this
   script on a (likely) later version of PulseAudio's headers.
   - This includes modifiction of `__all__` at the very end of the file.
+- All definitions of opaque structs (_opaque_struct dummy member) were
+  duplicated. Those duplicates have been manually removed.
 """
 
 import ctypes
@@ -447,15 +449,6 @@ struct_pa_mainloop_api._fields_ = [
 ]
 
 
-class struct_pa_mainloop_api(Structure):
-    __slots__ = [
-    ]
-
-
-struct_pa_mainloop_api._fields_ = [
-    ('_opaque_struct', c_int)
-]
-
 pa_mainloop_api = struct_pa_mainloop_api  # /usr/include/pulse/mainloop-api.h:47
 enum_pa_io_event_flags = c_int
 PA_IO_EVENT_NULL = 0
@@ -476,15 +469,6 @@ struct_pa_io_event._fields_ = [
 ]
 
 
-class struct_pa_io_event(Structure):
-    __slots__ = [
-    ]
-
-
-struct_pa_io_event._fields_ = [
-    ('_opaque_struct', c_int)
-]
-
 pa_io_event = struct_pa_io_event  # /usr/include/pulse/mainloop-api.h:59
 pa_io_event_cb_t = CFUNCTYPE(None, POINTER(pa_mainloop_api), POINTER(pa_io_event), c_int, pa_io_event_flags_t,
                              POINTER(None))  # /usr/include/pulse/mainloop-api.h:61
@@ -501,15 +485,6 @@ struct_pa_time_event._fields_ = [
     ('_opaque_struct', c_int)
 ]
 
-
-class struct_pa_time_event(Structure):
-    __slots__ = [
-    ]
-
-
-struct_pa_time_event._fields_ = [
-    ('_opaque_struct', c_int)
-]
 
 pa_time_event = struct_pa_time_event  # /usr/include/pulse/mainloop-api.h:66
 
@@ -528,15 +503,6 @@ struct_pa_defer_event._fields_ = [
     ('_opaque_struct', c_int)
 ]
 
-
-class struct_pa_defer_event(Structure):
-    __slots__ = [
-    ]
-
-
-struct_pa_defer_event._fields_ = [
-    ('_opaque_struct', c_int)
-]
 
 pa_defer_event = struct_pa_defer_event  # /usr/include/pulse/mainloop-api.h:73
 pa_defer_event_cb_t = CFUNCTYPE(None, POINTER(pa_mainloop_api), POINTER(pa_defer_event),
@@ -745,15 +711,6 @@ struct_pa_operation._fields_ = [
 ]
 
 
-class struct_pa_operation(Structure):
-    __slots__ = [
-    ]
-
-
-struct_pa_operation._fields_ = [
-    ('_opaque_struct', c_int)
-]
-
 pa_operation = struct_pa_operation  # /usr/include/pulse/operation.h:33
 pa_operation_notify_cb_t = CFUNCTYPE(None, POINTER(pa_operation), POINTER(None))  # /usr/include/pulse/operation.h:36
 # /usr/include/pulse/operation.h:39
@@ -792,15 +749,6 @@ struct_pa_context._fields_ = [
 ]
 
 
-class struct_pa_context(Structure):
-    __slots__ = [
-    ]
-
-
-struct_pa_context._fields_ = [
-    ('_opaque_struct', c_int)
-]
-
 pa_context = struct_pa_context  # /usr/include/pulse/context.h:154
 pa_context_notify_cb_t = CFUNCTYPE(None, POINTER(pa_context), POINTER(None))  # /usr/include/pulse/context.h:157
 pa_context_success_cb_t = CFUNCTYPE(None, POINTER(pa_context), c_int, POINTER(None))  # /usr/include/pulse/context.h:160
@@ -815,15 +763,6 @@ struct_pa_proplist._fields_ = [
     ('_opaque_struct', c_int)
 ]
 
-
-class struct_pa_proplist(Structure):
-    __slots__ = [
-    ]
-
-
-struct_pa_proplist._fields_ = [
-    ('_opaque_struct', c_int)
-]
 
 pa_proplist = struct_pa_proplist  # /usr/include/pulse/proplist.h:272
 
@@ -1326,15 +1265,6 @@ struct_pa_stream._fields_ = [
     ('_opaque_struct', c_int)
 ]
 
-
-class struct_pa_stream(Structure):
-    __slots__ = [
-    ]
-
-
-struct_pa_stream._fields_ = [
-    ('_opaque_struct', c_int)
-]
 
 pa_stream = struct_pa_stream  # /usr/include/pulse/stream.h:335
 pa_stream_success_cb_t = CFUNCTYPE(None, POINTER(pa_stream), c_int, POINTER(None))  # /usr/include/pulse/stream.h:338
@@ -2622,15 +2552,6 @@ struct_pa_threaded_mainloop._fields_ = [
 ]
 
 
-class struct_pa_threaded_mainloop(Structure):
-    __slots__ = [
-    ]
-
-
-struct_pa_threaded_mainloop._fields_ = [
-    ('_opaque_struct', c_int)
-]
-
 pa_threaded_mainloop = struct_pa_threaded_mainloop  # /usr/include/pulse/thread-mainloop.h:246
 # /usr/include/pulse/thread-mainloop.h:251
 pa_threaded_mainloop_new = _lib.pa_threaded_mainloop_new
@@ -2708,15 +2629,6 @@ struct_pa_mainloop._fields_ = [
 ]
 
 
-class struct_pa_mainloop(Structure):
-    __slots__ = [
-    ]
-
-
-struct_pa_mainloop._fields_ = [
-    ('_opaque_struct', c_int)
-]
-
 pa_mainloop = struct_pa_mainloop  # /usr/include/pulse/mainloop.h:78
 # /usr/include/pulse/mainloop.h:81
 pa_mainloop_new = _lib.pa_mainloop_new
@@ -2784,15 +2696,6 @@ struct_pollfd._fields_ = [
 ]
 
 
-class struct_pollfd(Structure):
-    __slots__ = [
-    ]
-
-
-struct_pollfd._fields_ = [
-    ('_opaque_struct', c_int)
-]
-
 pa_poll_func = CFUNCTYPE(c_int, POINTER(struct_pollfd), c_ulong, c_int,
                          POINTER(None))  # /usr/include/pulse/mainloop.h:124
 # /usr/include/pulse/mainloop.h:127
@@ -2810,15 +2713,6 @@ struct_pa_signal_event._fields_ = [
     ('_opaque_struct', c_int)
 ]
 
-
-class struct_pa_signal_event(Structure):
-    __slots__ = [
-    ]
-
-
-struct_pa_signal_event._fields_ = [
-    ('_opaque_struct', c_int)
-]
 
 pa_signal_event = struct_pa_signal_event  # /usr/include/pulse/mainloop-signal.h:39
 pa_signal_cb_t = CFUNCTYPE(None, POINTER(pa_mainloop_api), POINTER(pa_signal_event), c_int,
