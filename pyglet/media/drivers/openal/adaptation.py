@@ -35,6 +35,10 @@ class OpenALDriver(AbstractAudioDriver):
     def delete(self) -> None:
         assert _debug("Delete OpenALDriver")
         self.worker.stop()
+
+        # A device may only be closed if no more contexts and no more buffers exist on it
+        # A context may only be deleted if it is free of sources
+        # A buffer may only be deleted if no source is using it anymore
         self.context.delete_sources()
         self.device.buffer_pool.delete()
         self.context.delete()
@@ -123,13 +127,13 @@ class OpenALAudioPlayer(AbstractWorkableAudioPlayer):
         self._ideal_buffer_size = fmt.align(int(fmt.bytes_per_second * 0.5))
 
     def delete(self) -> None:
-        self.driver.worker.remove(self)
-        self.alsource.delete()
-        self.alsource = None
+        if self.alsource is not None:
+            self.driver.worker.remove(self)
+            self.alsource.delete()
+            self.alsource = None
 
     def play(self) -> None:
         assert _debug('OpenALAudioPlayer.play()')
-
         assert self.driver is not None
         assert self.alsource is not None
 
@@ -139,15 +143,15 @@ class OpenALAudioPlayer(AbstractWorkableAudioPlayer):
         self.driver.worker.add(self)
 
     def stop(self) -> None:
-        self.driver.worker.remove(self)
         assert _debug('OpenALAudioPlayer.stop()')
         assert self.driver is not None
         assert self.alsource is not None
+
+        self.driver.worker.remove(self)
         self.alsource.pause()
 
     def clear(self) -> None:
         assert _debug('OpenALAudioPlayer.clear()')
-
         assert self.driver is not None
         assert self.alsource is not None
 

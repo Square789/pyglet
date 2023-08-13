@@ -84,6 +84,8 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
     @abstractmethod
     def delete(self):
         """Stop playing and clean up all resources used by player."""
+        # This may be called from high level Players on shutdown after the player's driver
+        # has been deleted. AudioPlayer implementations must handle this.
 
     def _play_group(self, audio_players):
         """Begin simultaneous playback on a list of audio players."""

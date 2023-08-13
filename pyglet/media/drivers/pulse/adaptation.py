@@ -61,14 +61,18 @@ class PulseAudioDriver(AbstractAudioDriver):
 
     def delete(self) -> None:
         """Completely shut down pulseaudio client."""
-        if self.mainloop is not None:
-            with self.mainloop.lock:
-                if self.context is not None:
-                    self.context.delete()
-                    self.context = None
+        if self.mainloop is None:
+            return
 
-            self.mainloop.delete()
-            self.mainloop = None
+        self.worker.stop()
+
+        with self.mainloop.lock:
+            if self.context is not None:
+                self.context.delete()
+                self.context = None
+
+        self.mainloop.delete()
+        self.mainloop = None
 
     def get_listener(self) -> 'PulseAudioListener':
         return self._listener
@@ -147,7 +151,7 @@ class _AudioDataBuffer:
 class PulseAudioPlayer(AbstractWorkableAudioPlayer):
     def __init__(self, source: 'Source', player: 'Player', driver: 'PulseAudioDriver') -> None:
         super(PulseAudioPlayer, self).__init__(source, player)
-        self.driver = weakref.ref(driver)
+        self.driver = driver
 
         self._volume = 1.0
 
@@ -267,22 +271,17 @@ class PulseAudioPlayer(AbstractWorkableAudioPlayer):
         self.dispatch_media_events(read_index)
 
     def delete(self) -> None:
-        assert _debug('Delete PulseAudioPlayer')
+        assert _debug('PulseAudioPlayer.delete')
+        self.driver.worker.remove(self)
 
-        driver = self.driver()
-        if driver is None:
-            assert _debug('PulseAudioDriver has been garbage collected.')
-            self.stream = None
-            return
-
-        if driver.mainloop is None:
-            assert _debug('PulseAudioDriver already deleted. '
-                      'PulseAudioPlayer could not clean up properly.')
-            return
-
-        with driver.mainloop.lock:
-            self.stream.delete()
-            self.stream = None
+        with self.driver.mainloop.lock:
+            if self.driver.mainloop is None:
+                assert _debug('PulseAudioPlayer.delete: PulseAudioDriver already deleted.')
+                # This is fine otherwise. If the mainloop's gone, the context is gone too,
+                # having cleaned up all its streams.
+            else:
+                self.stream.delete()
+                self.stream = None
 
     def clear(self) -> None:
         assert _debug('PulseAudioPlayer.clear')
@@ -312,12 +311,12 @@ class PulseAudioPlayer(AbstractWorkableAudioPlayer):
                 self.stream.resume().wait().delete()
             assert not self.stream.is_corked()
 
-        self.driver().worker.add(self)
+        self.driver.worker.add(self)
         self._playing = True
 
     def stop(self) -> None:
         assert _debug('PulseAudioPlayer.stop')
-        self.driver().worker.remove(self)
+        self.driver.worker.remove(self)
 
         with self.stream.mainloop.lock:
             self.stream.pause().wait().delete()
@@ -362,7 +361,7 @@ class PulseAudioPlayer(AbstractWorkableAudioPlayer):
         self._volume = volume
 
         if self.stream:
-            driver = self.driver()
+            driver = self.driver
             volume *= driver._listener._volume
             with driver.context.mainloop.lock:
                 driver.context.set_input_volume(self.stream, volume).wait().delete()

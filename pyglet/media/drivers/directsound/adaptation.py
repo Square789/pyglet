@@ -33,6 +33,65 @@ def _db2gain(db):
     return math.pow(10.0, float(db)/1000.0)
 
 
+class DirectSoundDriver(AbstractAudioDriver):
+    def __init__(self):
+        self._ds_driver = interface.DirectSoundDriver()
+        self._ds_listener = self._ds_driver.create_listener()
+
+        assert self._ds_driver is not None
+        assert self._ds_listener is not None
+
+        self.worker = PlayerWorkerThread()
+        self.worker.start()
+
+    def create_audio_player(self, source, player):
+        assert self._ds_driver is not None
+        # We increase IDirectSound refcount for each AudioPlayer instantiated
+        # This makes sure the AudioPlayer still has a valid _native_dsound to
+        # clean-up itself during tear-down.
+        self._ds_driver._native_dsound.AddRef()
+        return DirectSoundAudioPlayer(self, self._ds_driver, source, player)
+
+    def get_listener(self):
+        assert self._ds_driver is not None
+        assert self._ds_listener is not None
+        return DirectSoundListener(self._ds_listener, self._ds_driver.primary_buffer)
+
+    def delete(self):
+        assert _debug("Deleting DirectSoundDriver")
+        self.worker.stop()
+        # Destroy listener before destroying driver
+        self._ds_listener.delete()
+        self._ds_driver.delete()
+        assert _debug("DirectSoundDriver deleted.")
+
+
+class DirectSoundListener(AbstractListener):
+    def __init__(self, ds_listener, ds_buffer):
+        self._ds_listener = ds_listener
+        self._ds_buffer = ds_buffer
+
+    def _set_volume(self, volume):
+        self._volume = volume
+        self._ds_buffer.volume = _gain2db(volume)
+
+    def _set_position(self, position):
+        self._position = position
+        self._ds_listener.position = _convert_coordinates(position)
+
+    def _set_forward_orientation(self, orientation):
+        self._forward_orientation = orientation
+        self._set_orientation()
+
+    def _set_up_orientation(self, orientation):
+        self._up_orientation = orientation
+        self._set_orientation()
+
+    def _set_orientation(self):
+        self._ds_listener.orientation = (_convert_coordinates(self._forward_orientation)
+                                         + _convert_coordinates(self._up_orientation))
+
+
 class DirectSoundAudioPlayer(AbstractWorkableAudioPlayer):
     # Need to cache these because pyglet API allows update separately, but
     # DSound requires both to be set at once.
@@ -283,62 +342,3 @@ class DirectSoundAudioPlayer(AbstractWorkableAudioPlayer):
 
     def prefill_audio(self):
         self._maybe_fill()
-
-
-class DirectSoundDriver(AbstractAudioDriver):
-    def __init__(self):
-        self._ds_driver = interface.DirectSoundDriver()
-        self._ds_listener = self._ds_driver.create_listener()
-
-        assert self._ds_driver is not None
-        assert self._ds_listener is not None
-
-        self.worker = PlayerWorkerThread()
-        self.worker.start()
-
-    def create_audio_player(self, source, player):
-        assert self._ds_driver is not None
-        # We increase IDirectSound refcount for each AudioPlayer instantiated
-        # This makes sure the AudioPlayer still has a valid _native_dsound to
-        # clean-up itself during tear-down.
-        self._ds_driver._native_dsound.AddRef()
-        return DirectSoundAudioPlayer(self, self._ds_driver, source, player)
-
-    def get_listener(self):
-        assert self._ds_driver is not None
-        assert self._ds_listener is not None
-        return DirectSoundListener(self._ds_listener, self._ds_driver.primary_buffer)
-
-    def delete(self):
-        assert _debug("Deleting DirectSoundDriver")
-        self.worker.stop()
-        # Destroy listener before destroying driver
-        self._ds_listener.delete()
-        self._ds_driver.delete()
-        assert _debug("DirectSoundDriver deleted.")
-
-
-class DirectSoundListener(AbstractListener):
-    def __init__(self, ds_listener, ds_buffer):
-        self._ds_listener = ds_listener
-        self._ds_buffer = ds_buffer
-
-    def _set_volume(self, volume):
-        self._volume = volume
-        self._ds_buffer.volume = _gain2db(volume)
-
-    def _set_position(self, position):
-        self._position = position
-        self._ds_listener.position = _convert_coordinates(position)
-
-    def _set_forward_orientation(self, orientation):
-        self._forward_orientation = orientation
-        self._set_orientation()
-
-    def _set_up_orientation(self, orientation):
-        self._up_orientation = orientation
-        self._set_orientation()
-
-    def _set_orientation(self):
-        self._ds_listener.orientation = (_convert_coordinates(self._forward_orientation)
-                                         + _convert_coordinates(self._up_orientation))
