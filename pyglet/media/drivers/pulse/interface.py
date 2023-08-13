@@ -1,30 +1,33 @@
+import ctypes
 import sys
-from typing import Any, Callable, Dict, Optional, TYPE_CHECKING, TypeVar, Union
+from typing import Any, Callable, Dict, Optional, Tuple, TYPE_CHECKING, TypeVar, Union
 import weakref
 
-import pyglet
 from pyglet.media.drivers.pulse import lib_pulseaudio as pa
 from pyglet.media.exceptions import MediaException
 from pyglet.util import debug_print
 
 if TYPE_CHECKING:
-    from pyglet.media.codecs import AudioFormat
+    from pyglet.media.codecs import AudioData, AudioFormat
 
 T = TypeVar('T')
-PulseAudioStreamSuccessCallback = Callable[[pa.pa_stream, int, Any], Any]
-PulseAudioContextSuccessCallback = Callable[[pa.pa_context, int, Any], Any]
+PulseAudioStreamSuccessCallback = Callable[[ctypes.POINTER(pa.pa_stream), int, Any], Any]
+PulseAudioStreamRequestCallback = Callable[[ctypes.POINTER(pa.pa_stream), int, Any], Any]
+PulseAudioStreamNotifyCallback = Callable[[ctypes.POINTER(pa.pa_stream), Any], Any]
+PulseAudioContextSuccessCallback = Callable[[ctypes.POINTER(pa.pa_context), int, Any], Any]
 
 
 _debug = debug_print('debug_media')
 
 
-PA_INVALID_INDEX = 0xFFFFFFFF  # max uint32
-PA_INVALID_WRITABLE_SIZE = sys.maxsize*2 + 1  # max size_t
+_UINT32_MAX = 0xFFFFFFFF
+_SIZE_T_MAX = sys.maxsize*2 + 1
+PA_INVALID_INDEX = _UINT32_MAX
+PA_INVALID_WRITABLE_SIZE = _SIZE_T_MAX
 
 
 def get_uint32_or_none(value: Optional[int]) -> Optional[int]:
-    # Check for max uint32
-    if value is None or value == 0xFFFFFFFF:
+    if value is None or value == _UINT32_MAX:
         return None
     return value
 
@@ -335,7 +338,7 @@ class PulseAudioContext(PulseAudioMainloopChild):
         raise PulseAudioException(error, get_ascii_str_or_none(pa.pa_strerror(error)))
 
 
-class PulseAudioStream(PulseAudioMainloopChild, pyglet.event.EventDispatcher):
+class PulseAudioStream(PulseAudioMainloopChild):
     """PulseAudio audio stream."""
 
     _state_name = {pa.PA_STREAM_UNCONNECTED: 'Unconnected',
@@ -354,10 +357,9 @@ class PulseAudioStream(PulseAudioMainloopChild, pyglet.event.EventDispatcher):
         """The stream's sink index."""
 
         self.context = weakref.ref(context)
-        self.underflow = False
 
-        self._cb_underflow = pa.pa_stream_notify_cb_t(self._underflow_callback)
-        self._cb_write = pa.pa_stream_request_cb_t(self._write_callback)
+        self._cb_write = pa.pa_stream_request_cb_t(0)
+        self._cb_underflow = pa.pa_stream_notify_cb_t(0)
         self._cb_state = pa.pa_stream_notify_cb_t(self._state_callback)
         self._cb_moved = pa.pa_stream_notify_cb_t(self._moved_callback)
 
@@ -370,7 +372,8 @@ class PulseAudioStream(PulseAudioMainloopChild, pyglet.event.EventDispatcher):
         )
         context.check_not_null(self._pa_stream)
 
-        self._connect_callbacks()
+        pa.pa_stream_set_state_callback(self._pa_stream, self._cb_state, None)
+        pa.pa_stream_set_moved_callback(self._pa_stream, self._cb_moved, None)
         self._refresh_state()
 
     def create_sample_spec(self, audio_format: 'AudioFormat') -> pa.pa_sample_spec:
@@ -467,11 +470,20 @@ class PulseAudioStream(PulseAudioMainloopChild, pyglet.event.EventDispatcher):
         assert context is not None
 
         device = None
-        buffer_attr = None
+
+        buffer_attr = pa.pa_buffer_attr()
+        buffer_attr.fragsize = _UINT32_MAX  # Irrelevant for playback
+        buffer_attr.maxlength = _UINT32_MAX
+        buffer_attr.tlength = _UINT32_MAX
+        buffer_attr.prebuf = _UINT32_MAX
+        buffer_attr.minreq = _UINT32_MAX
+
         flags = (pa.PA_STREAM_START_CORKED |
                  pa.PA_STREAM_INTERPOLATE_TIMING |
                  pa.PA_STREAM_VARIABLE_RATE)
+
         volume = None
+
         sync_stream = None  # TODO use this
 
         context.check(
@@ -488,35 +500,41 @@ class PulseAudioStream(PulseAudioMainloopChild, pyglet.event.EventDispatcher):
         if not self.is_ready:
             context.raise_error()
 
-        self._update_sink_index()
+        self._refresh_sink_index()
+        # ba = pa.pa_stream_get_buffer_attr(self._pa_stream).contents
+        # print(f"{ba.maxlength=}, {ba.tlength=}, {ba.prebuf=}, {ba.minreq=}, {ba.fragsize=}")
 
         assert _debug('PulseAudioStream: Playback connected')
 
-    def write(
-        self,
-        audio_data: 'AudioData',
-        length: int = None,
-        seek_mode=pa.PA_SEEK_RELATIVE,
-    ) -> int:
+    def begin_write(self, nbytes: Optional[int] = None) -> Tuple[ctypes.c_void_p, int]:
+        context = self.context()
+        assert context is not None
+
+        addr = ctypes.c_void_p()
+        nbytes_st = ctypes.c_size_t(_SIZE_T_MAX if nbytes is None else nbytes)
+
+        context.check(
+            pa.pa_stream_begin_write(self._pa_stream, ctypes.byref(addr), ctypes.byref(nbytes_st))
+        )
+        context.check_ptr_not_null(addr)
+
+        assert _debug(f"PulseAudioStream: begin_write nbytes={nbytes} nbytes_n={nbytes_st.value}")
+
+        return addr, nbytes_st.value
+
+    def cancel_write(self) -> None:
+        self.context().check(pa.pa_stream_cancel_write(self._pa_stream))
+
+    def write(self, data, length: int, seek_mode=pa.PA_SEEK_RELATIVE) -> int:
         context = self.context()
         assert context is not None
         assert self._pa_stream is not None
         assert self.is_ready
-
-        if length is None:
-            length = min(audio_data.length, self.writable_size)
         assert _debug(f'PulseAudioStream: writing {length} bytes')
-        assert _debug(f'PulseAudioStream: writable size before write {self.get_writable_size()} bytes')
+
         context.check(
-                pa.pa_stream_write(self._pa_stream,
-                                   audio_data.data,
-                                   length,
-                                   pa.pa_free_cb_t(0),  # Data is copied
-                                   0,
-                                   seek_mode)
-                )
-        assert _debug(f'PulseAudioStream: writable size after write {self.get_writable_size()} bytes')
-        self.underflow = False
+            pa.pa_stream_write(self._pa_stream, data, length, pa.pa_free_cb_t(0), 0, seek_mode)
+        )
         return length
 
     def update_timing_info(
@@ -618,10 +636,13 @@ class PulseAudioStream(PulseAudioMainloopChild, pyglet.event.EventDispatcher):
             ),
         )
 
-    def _update_sink_index(self) -> None:
-        self.index = pa.pa_stream_get_index(self._pa_stream)
-        if self.index == PA_INVALID_INDEX:
-            self.context().raise_error()
+    def set_write_callback(self, f: PulseAudioStreamRequestCallback) -> None:
+        self._cb_write = pa.pa_stream_request_cb_t(f)
+        pa.pa_stream_set_write_callback(self._pa_stream, self._cb_write, None)
+
+    def set_underflow_callback(self, f: PulseAudioStreamNotifyCallback) -> None:
+        self._cb_underflow = pa.pa_stream_notify_cb_t(f)
+        pa.pa_stream_set_underflow_callback(self._pa_stream, self._cb_underflow, None)
 
     def _connect_callbacks(self) -> None:
         s = self._pa_stream
@@ -637,43 +658,22 @@ class PulseAudioStream(PulseAudioMainloopChild, pyglet.event.EventDispatcher):
         pa.pa_stream_set_state_callback(s, pa.pa_stream_notify_cb_t(0), None)
         pa.pa_stream_set_moved_callback(s, pa.pa_stream_notify_cb_t(0), None)
 
-    def _underflow_callback(self, _stream, _userdata) -> None:
-        assert _debug("PulseAudioStream: underflow")
-        self.underflow = True
-        self._write_needed()
-        self.mainloop.signal()
-
-    def _write_callback(self, _stream, nbytes: int, _userdata) -> None:
-        assert _debug("PulseAudioStream: write requested")
-        self._write_needed(nbytes)
-        self.mainloop.signal()
-
     def _state_callback(self, _stream, _userdata) -> None:
         self._refresh_state()
         assert _debug(f"PulseAudioStream: state changed to {self._state_name[self.state]}")
         self.mainloop.signal()
 
     def _moved_callback(self, _stream, _userdata) -> None:
-        self._update_sink_index()
+        self._refresh_sink_index()
         assert _debug(f"PulseAudioStream: moved to new index {self.index}")
+
+    def _refresh_sink_index(self) -> None:
+        self.index = pa.pa_stream_get_index(self._pa_stream)
+        if self.index == PA_INVALID_INDEX:
+            self.context().raise_error()
 
     def _refresh_state(self) -> None:
         self.state = pa.pa_stream_get_state(self._pa_stream)
-
-    def _write_needed(self, nbytes: Optional[int] = None) -> None:
-        if nbytes is None:
-            nbytes = self.get_writable_size()
-        # This dispatch call is made from the threaded mainloop thread!
-        pyglet.app.platform_event_loop.post_event(self, 'on_write_needed', nbytes, self.underflow)
-
-    def on_write_needed(self, nbytes, underflow):
-        """A write is requested from PulseAudio.
-        Called from the pyglet main thread, so locking is required.
-
-        :event:
-        """
-
-PulseAudioStream.register_event_type('on_write_needed')
 
 
 class PulseAudioOperation(PulseAudioMainloopChild):
