@@ -104,7 +104,7 @@ class AudioData:
     This class is used internally by pyglet.
 
     Args:
-        data (bytes or ctypes array): Sample data.
+        data (bytes, ctypes array, or supporting buffer protocol): Sample data.
         length (int): Size of sample data, in bytes.
         timestamp (float): Time of the first sample, in seconds.
         duration (float): Total data duration, in seconds.
@@ -113,7 +113,7 @@ class AudioData:
             this audio packet.
     """
 
-    __slots__ = 'data', 'length', 'timestamp', 'duration', 'events', 'pointer', '_bytes_data'
+    __slots__ = 'data', 'length', 'timestamp', 'duration', 'events', 'pointer'
 
     def __init__(self,
                  data: Union[bytes, ctypes.Array],
@@ -122,11 +122,14 @@ class AudioData:
                  duration: float = -1.0,
                  events: Optional[List['MediaEvent']] = None) -> None:
 
+        if length == 0:
+            print("WARNING: empty audiodata")
+            # TODO: absolutely remove this, just for a loud scream in case something provides empty AD
+
         if isinstance(data, bytes):
             # bytes are treated specially by ctypes and can be cast to a void pointer, get
             # their content's address like this
             self.pointer = ctypes.cast(data, ctypes.c_void_p).value
-            self._bytes_data = data
         elif isinstance(data, ctypes.Array):
             self.pointer = ctypes.addressof(data)
         else:
@@ -147,8 +150,6 @@ class AudioData:
         self.timestamp = timestamp
         self.duration = duration
         self.events = [] if events is None else events
-
-        self._bytes_data = None
 
     # def __eq__(self, other) -> bool:
     #     raise RuntimeError("AudioData compared?")
@@ -724,25 +725,34 @@ class PreciseStreamingSource(StreamingSource):
 
             # Don't bother with super-small requests to something that likely does some form of I/O
             # Also, intentionally overshoot since some sources may just barely undercut.
-            attempt = next_or_equal_power_of_two(max(4096, required_bytes + 16))
-            for attempt_size in (attempt, attempt * 2, attempt * 8):
-                res = self._source.get_audio_data(attempt_size)
+            base_attempt = next_or_equal_power_of_two(max(4096, required_bytes + 16))
+            attempts = (base_attempt, base_attempt, base_attempt * 2, base_attempt * 8)
+            cur_attempt_idx = 0
+            # A malicious decoder could technically trap us by delivering empty AudioData, though
+            # the argument that this is unnecessarily defensive programming is definitely valid.
+            empty_bailout = 4
+
+            while True:
+                if cur_attempt_idx + 1 < 4: # len(attempts)
+                    cur_attempt_idx += 1
+                res = self._source.get_audio_data(attempts[cur_attempt_idx])
+
                 if res is None:
                     self._exhausted = True
+                elif res.length == 0:
+                    empty_bailout -= 1
+                    if empty_bailout <= 0:
+                        self._exhausted = True
+                else:
+                    empty_bailout = 4
+                    self._buffer += res.data
+
+                if len(self._buffer) >= num_bytes or self._exhausted:
                     break
 
-                self._buffer += res.data
-                if len(self._buffer) >= num_bytes:
-                    # Got enough
-                    break
-            else:
-                # We didn't receive None, but also didn't get enough after requesting more than 10
-                # times of the needed amount. Fake exhaustion in this case.
-                self._exhausted = True
-
-        res = bytes(self._buffer[:num_bytes])
+        res = self._buffer[:num_bytes]
         del self._buffer[:num_bytes]
-        return AudioData(res, len(res), -1.0, -1.0, [])
+        return AudioData(res, len(res), -1.0, -1.0, []) if res else None
 
     def get_next_video_timestamp(self) -> Optional[float]:
         return self._source.get_next_video_timestamp()
