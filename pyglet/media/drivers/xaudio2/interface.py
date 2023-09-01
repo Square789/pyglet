@@ -206,7 +206,7 @@ class XAudio2Driver:
         for source_voice in self._emitting_voices:
             self.apply3d(source_voice)
 
-        self._xaudio2.CommitChanges(0)
+        # self._xaudio2.CommitChanges(0)
 
     def _calculate3d(self, listener, emitter):
         lib.X3DAudioCalculate(
@@ -252,16 +252,16 @@ class XAudio2Driver:
         self._listener = XAudio2Listener(self)
         return self._listener
 
-    def get_source_voice(self, source, player):
+    def get_source_voice(self, audio_format, player):
         """ Get a source voice from the pool. Source voice creation can be slow to create/destroy. So pooling is
             recommended. We pool based on audio channels as channels must be the same as well as frequency.
             Source voice handles all of the audio playing and state for a single source."""
-        voice_key = (source.audio_format.channels, source.audio_format.sample_size, source.audio_format.sample_rate)
+        voice_key = (audio_format.channels, audio_format.sample_size, audio_format.sample_rate)
         if len(self._voice_pool[voice_key]) > 0:
             source_voice = self._voice_pool[voice_key].pop(0)
             source_voice.acquired(player)
         else:
-            source_voice = self._get_voice(source, player)
+            source_voice = self._create_new_voice(audio_format, player)
 
         if source_voice.is_emitter:
             self._emitting_voices.append(source_voice)
@@ -269,28 +269,24 @@ class XAudio2Driver:
         self._in_use.append(source_voice)
         return source_voice
 
-    def _create_new_voice(self, source, player):
+    def _create_new_voice(self, audio_format, player):
         """Has the driver create a new source voice for the source."""
         voice = lib.IXAudio2SourceVoice()
 
-        wfx_format = self.create_wave_format(source.audio_format)
+        wfx_format = self.create_wave_format(audio_format)
 
-        callback = lib.XA2SourceCallback(player)
+        callback = lib.XAudio2VoiceCallback(player)
         self._xaudio2.CreateSourceVoice(ctypes.byref(voice),
                                         ctypes.byref(wfx_format),
                                         0,
                                         self.max_frequency_ratio,
                                         callback,
-                                        None, None)
-        return voice, callback
-
-    def _get_voice(self, source, player):
-        """Creates a new source voice and puts it into XA2SourceVoice high level wrap."""
-        voice, callback = self._create_new_voice(source, player)
-        return XA2SourceVoice(voice, callback, source.audio_format)
+                                        None,
+                                        None)
+        return XA2SourceVoice(voice, callback, audio_format)
 
     def return_voice(self, voice):
-        """Reset a voice and return it to the pool."""
+        """Have a voice return itself to the pool. It must be free of queued buffers."""
         voice.reset()
         voice_key = (voice.audio_format.channels, voice.audio_format.sample_size, voice.audio_format.sample_rate)
         self._voice_pool[voice_key].append(voice)
@@ -301,17 +297,10 @@ class XAudio2Driver:
     @staticmethod
     def create_buffer(audio_data):
         """Creates a XAUDIO2_BUFFER to be used with a source voice.
-            Audio data cannot be purged until the source voice has played it; doing so will cause glitches.
-            Furthermore, if the data is not in a string buffer, such as pure bytes, it must be converted."""
-        if type(audio_data.data) == bytes:
-            data = (ctypes.c_char * audio_data.length)()
-            ctypes.memmove(data, audio_data.data, audio_data.length)
-        else:
-            data = audio_data.data
-
+           Audio data cannot be purged until the source voice has played it; doing so will cause glitches."""
         buff = lib.XAUDIO2_BUFFER()
         buff.AudioBytes = audio_data.length
-        buff.pAudioData = data
+        buff.pAudioData = ctypes.cast(audio_data.pointer, ctypes.POINTER(ctypes.c_char))
         return buff
 
     @staticmethod
@@ -327,7 +316,6 @@ class XAudio2Driver:
 
 
 class XA2SourceVoice:
-
     def __init__(self, voice, callback, audio_format):
         self._voice_state = lib.XAUDIO2_VOICE_STATE()  # Used for buffer state, will be reused constantly.
         self._voice = voice
@@ -394,8 +382,6 @@ class XA2SourceVoice:
         if self._emitter is not None:
             self.position = (0, 0, 0)
 
-        self._voice.Stop(0, 0)
-        self._voice.FlushSourceBuffers()
         self._callback.xa2_player = None
 
     @property
