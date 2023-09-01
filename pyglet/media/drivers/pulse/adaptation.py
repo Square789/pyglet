@@ -105,7 +105,6 @@ class _AudioDataBuffer:
         self.comfortable_limit = audio_fmt.align(int(audio_fmt.bytes_per_second * 1.0))
         self._data: Deque['AudioData'] = deque()
         self._first_read_offset = 0
-        print(self.ideal_size, self.comfortable_limit)
 
     def clear(self) -> None:
         self.available = 0
