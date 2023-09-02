@@ -152,6 +152,10 @@ class OpenALSource(OpenALObject):
         self._owned_buffers = {}
 
     def delete(self):
+        if self.context is None:
+            assert _debug("Delete interface.OpenAlSource on deleted source, ignoring")
+            return
+
         assert _debug("Delete interface.OpenALSource")
         al.alDeleteSources(1, self._al_source)
         self._check_error('Failed to delete source.')
