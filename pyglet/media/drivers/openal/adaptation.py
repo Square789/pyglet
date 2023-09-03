@@ -37,8 +37,9 @@ class OpenALDriver(AbstractAudioDriver):
         self.worker.stop()
 
         # A device may only be closed if no more contexts and no more buffers exist on it
-        # A context may only be deleted if it is free of sources
         # A buffer may only be deleted if no source is using it anymore
+        # A context may only be deleted if it is free of sources
+        # Buffers need a context to report errors to when being deleted
         self.context.delete_sources()
         self.device.buffer_pool.delete()
         self.context.delete()

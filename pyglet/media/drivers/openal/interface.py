@@ -113,10 +113,13 @@ class OpenALContext(OpenALObject):
 
     def delete(self):
         assert _debug("Delete interface.OpenALContext")
-        # TODO: Maybe check if the context to be deleted is current.
-        # Comparing alcGetCurrentContext doesn't work for some reason.
-        alc.alcMakeContextCurrent(None)
-        self.device.check_context_error('Failed to make context no longer current.')
+
+        if (
+            ctypes.cast(alc.alcGetCurrentContext(), ctypes.c_void_p).value ==
+            ctypes.cast(self._al_context, ctypes.c_void_p).value
+        ):
+            alc.alcMakeContextCurrent(None)
+            self.device.check_context_error('Failed to make context no longer current.')
 
         alc.alcDestroyContext(self._al_context)
         self.device.check_context_error('Failed to destroy context.')
