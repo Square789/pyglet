@@ -12,6 +12,26 @@ from . import lib_xaudio2 as lib
 _debug = debug_print('debug_media')
 
 
+def create_xa2_buffer(audio_data):
+    """Creates a XAUDIO2_BUFFER to be used with a source voice.
+        Audio data cannot be purged until the source voice has played it; doing so will cause glitches."""
+    buff = lib.XAUDIO2_BUFFER()
+    buff.AudioBytes = audio_data.length
+    buff.pAudioData = ctypes.cast(audio_data.pointer, ctypes.POINTER(ctypes.c_char))
+    return buff
+
+
+def create_xa2_waveformat(audio_format):
+    wfx = lib.WAVEFORMATEX()
+    wfx.wFormatTag = lib.WAVE_FORMAT_PCM
+    wfx.nChannels = audio_format.channels
+    wfx.nSamplesPerSec = audio_format.sample_rate
+    wfx.wBitsPerSample = audio_format.sample_size
+    wfx.nBlockAlign = wfx.wBitsPerSample * wfx.nChannels // 8
+    wfx.nAvgBytesPerSec = wfx.nSamplesPerSec * wfx.nBlockAlign
+    return wfx
+
+
 class XAudio2Driver:
     # Specifies if positional audio should be used. Can be enabled later, but not disabled.
     allow_3d = True
@@ -233,13 +253,9 @@ class XAudio2Driver:
         self._calculate3d(self._listener.listener, source_voice._emitter)
         self._apply3d(source_voice._voice, commit)
 
-    def __del__(self):
-        try:
-            self._delete_driver()
-            pyglet.clock.unschedule(self._check_state)
-        except AttributeError:
-            # Usually gets unloaded by default on app exit, but be safe.
-            pass
+    def delete(self):
+        self._delete_driver()
+        pyglet.clock.unschedule(self._check_state)
 
     def get_performance(self):
         """Retrieve some basic XAudio2 performance data such as memory usage and source counts."""
@@ -273,7 +289,7 @@ class XAudio2Driver:
         """Has the driver create a new source voice for the source."""
         voice = lib.IXAudio2SourceVoice()
 
-        wfx_format = self.create_wave_format(audio_format)
+        wfx_format = create_xa2_waveformat(audio_format)
 
         callback = lib.XAudio2VoiceCallback(player)
         self._xaudio2.CreateSourceVoice(ctypes.byref(voice),
@@ -293,26 +309,6 @@ class XAudio2Driver:
 
         if voice.is_emitter:
             self._emitting_voices.remove(voice)
-
-    @staticmethod
-    def create_buffer(audio_data):
-        """Creates a XAUDIO2_BUFFER to be used with a source voice.
-           Audio data cannot be purged until the source voice has played it; doing so will cause glitches."""
-        buff = lib.XAUDIO2_BUFFER()
-        buff.AudioBytes = audio_data.length
-        buff.pAudioData = ctypes.cast(audio_data.pointer, ctypes.POINTER(ctypes.c_char))
-        return buff
-
-    @staticmethod
-    def create_wave_format(audio_format):
-        wfx = lib.WAVEFORMATEX()
-        wfx.wFormatTag = lib.WAVE_FORMAT_PCM
-        wfx.nChannels = audio_format.channels
-        wfx.nSamplesPerSec = audio_format.sample_rate
-        wfx.wBitsPerSample = audio_format.sample_size
-        wfx.nBlockAlign = wfx.wBitsPerSample * wfx.nChannels // 8
-        wfx.nAvgBytesPerSec = wfx.nSamplesPerSec * wfx.nBlockAlign
-        return wfx
 
 
 class XA2SourceVoice:
@@ -344,18 +340,16 @@ class XA2SourceVoice:
 
     @property
     def player(self):
-        """Returns the player class, stored within the callback."""
-        return self._callback.xa2_player
+        """Returns the player currently associated with the voice,
+        stored within the callback."""
+        return self._callback.player
 
     def delete(self):
         self._emitter = None
         self._voice.Stop(0, 0)
         self._voice.FlushSourceBuffers()
         self._voice = None
-        self._callback.xa2_player = None
-
-    def __del__(self):
-        self.destroy()
+        self._callback.player = None
 
     def destroy(self):
         """Completely destroy the voice."""
@@ -375,14 +369,14 @@ class XA2SourceVoice:
 
     def acquired(self, player):
         """A voice has been reacquired, set the player for callback."""
-        self._callback.xa2_player = player
+        self._callback.player = player
 
     def reset(self):
         """When a voice is returned to the pool, reset position on emitter."""
         if self._emitter is not None:
             self.position = (0, 0, 0)
 
-        self._callback.xa2_player = None
+        self._callback.player = None
 
     @property
     def buffers_queued(self):
@@ -535,9 +529,6 @@ class XAudio2Listener:
         self.listener.OrientTop.x = 0
         self.listener.OrientTop.y = 1
         self.listener.OrientTop.z = 0
-
-    def __del__(self):
-        self.delete()
 
     def delete(self):
         self.listener = None
