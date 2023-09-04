@@ -4,7 +4,7 @@ import threading
 from typing import Deque, Optional, TYPE_CHECKING
 import weakref
 
-from pyglet.media.drivers.base import AbstractAudioDriver, AbstractWorkableAudioPlayer, MediaEvent
+from pyglet.media.drivers.base import AbstractAudioDriver, AbstractAudioPlayer, MediaEvent
 from pyglet.media.drivers.listener import AbstractListener
 from pyglet.media.player_worker_thread import PlayerWorkerThread
 from pyglet.util import debug_print
@@ -147,7 +147,7 @@ class _AudioDataBuffer:
         return bytes_written
 
 
-class PulseAudioPlayer(AbstractWorkableAudioPlayer):
+class PulseAudioPlayer(AbstractAudioPlayer):
     def __init__(self, source: 'Source', player: 'Player', driver: 'PulseAudioDriver') -> None:
         super(PulseAudioPlayer, self).__init__(source, player)
         self.driver = driver

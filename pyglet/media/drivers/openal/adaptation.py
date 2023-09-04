@@ -2,7 +2,7 @@ from collections import deque
 from typing import TYPE_CHECKING, List, Optional, Tuple
 import weakref
 
-from pyglet.media.drivers.base import AbstractAudioDriver, AbstractWorkableAudioPlayer, MediaEvent
+from pyglet.media.drivers.base import AbstractAudioDriver, AbstractAudioPlayer, MediaEvent
 from pyglet.media.drivers.listener import AbstractListener
 from pyglet.media.drivers.openal import interface
 from pyglet.media.player_worker_thread import PlayerWorkerThread
@@ -85,7 +85,7 @@ class OpenALListener(AbstractListener):
         self._up_orientation = orientation
 
 
-class OpenALAudioPlayer(AbstractWorkableAudioPlayer):
+class OpenALAudioPlayer(AbstractAudioPlayer):
     COMFORTABLE_BUFFER_LIMIT = 1.0
     """How much unplayed data should be queued on the source through various
     buffers at all times, in seconds.

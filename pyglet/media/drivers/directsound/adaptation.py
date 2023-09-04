@@ -2,7 +2,7 @@ import math
 import ctypes
 
 from . import interface
-from pyglet.media.drivers.base import AbstractAudioDriver, AbstractWorkableAudioPlayer, MediaEvent
+from pyglet.media.drivers.base import AbstractAudioDriver, AbstractAudioPlayer, MediaEvent
 from pyglet.media.drivers.listener import AbstractListener
 from pyglet.media.player_worker_thread import PlayerWorkerThread
 from pyglet.util import debug_print
@@ -92,7 +92,7 @@ class DirectSoundListener(AbstractListener):
                                          + _convert_coordinates(self._up_orientation))
 
 
-class DirectSoundAudioPlayer(AbstractWorkableAudioPlayer):
+class DirectSoundAudioPlayer(AbstractAudioPlayer):
     # Need to cache these because pyglet API allows update separately, but
     # DSound requires both to be set at once.
     _cone_inner_angle = 360

@@ -7,6 +7,9 @@ class SilentAudioPlayer(AbstractAudioPlayer):
     def delete(self):
         pass
 
+    def work(self):
+        pass
+
     def play(self):
         pass
 

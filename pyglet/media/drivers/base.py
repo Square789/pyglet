@@ -12,7 +12,9 @@ _debug = debug_print('debug_media')
 
 
 class AbstractAudioPlayer(metaclass=ABCMeta):
-    """Base class for driver audio players.
+    """Base class for driver audio players to be used by the high-level
+    player. Relies on a thread to regularly call a `work` method in order
+    for it to operate.
     """
 
     # Audio synchronization constants
@@ -64,6 +66,10 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         self.source = weakref.proxy(source)
 
     @abstractmethod
+    def work(self):
+        pass
+
+    @abstractmethod
     def play(self):
         """Begin playback."""
 
@@ -75,7 +81,7 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
     def clear(self):
         """Clear all buffered data and prepare for replacement data.
 
-        The player should be stopped before calling this method.
+        The player must be stopped before calling this method.
         """
         self._events.clear()
         self.audio_diff_avg_count = 0
@@ -86,18 +92,6 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         """Stop playing and clean up all resources used by player."""
         # This may be called from high level Players on shutdown after the player's driver
         # has been deleted. AudioPlayer implementations must handle this.
-
-    def _play_group(self, audio_players):
-        """Begin simultaneous playback on a list of audio players."""
-        # This should be overridden by subclasses for better synchrony.
-        for player in audio_players:
-            player.play()
-
-    def _stop_group(self, audio_players):
-        """Stop simultaneous playback on a list of audio players."""
-        # This should be overridden by subclasses for better synchrony.
-        for player in audio_players:
-            player.stop()
 
     @abstractmethod
     def get_time(self):
@@ -110,6 +104,18 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         :return: current play cursor time, in seconds.
         """
         # TODO determine which source within group
+
+    def _play_group(self, audio_players):
+        """Begin simultaneous playback on a list of audio players."""
+        # This should be overridden by subclasses for better synchrony.
+        for player in audio_players:
+            player.play()
+
+    def _stop_group(self, audio_players):
+        """Stop simultaneous playback on a list of audio players."""
+        # This should be overridden by subclasses for better synchrony.
+        for player in audio_players:
+            player.stop()
 
     def append_events(self, start_index, events):
         """Append the given :class:`MediaEvent`s to the events deque using
@@ -202,14 +208,7 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         pass
 
 
-class AbstractWorkableAudioPlayer(AbstractAudioPlayer):
-    """An audio player that relies on a thread to regularly call a `work`
-    method in order for it to operate.
-    """
-
-    @abstractmethod
-    def work(self):
-        pass
+AbstractAudioPlayer = AbstractAudioPlayer
 
 
 class AbstractAudioDriver(metaclass=ABCMeta):

@@ -7,7 +7,7 @@ import pyglet
 from pyglet.util import debug_print
 
 if TYPE_CHECKING:
-    from pyglet.media.drivers.base import AbstractWorkableAudioPlayer
+    from pyglet.media.drivers.base import AbstractAudioPlayer
 
 
 _debug = debug_print('debug_media')
@@ -29,7 +29,7 @@ class PlayerWorkerThread(threading.Thread):
         # A lock that should be held as long as consistency of `self.players` is required.
         self._operation_lock = threading.Lock()
         self._stopped = False
-        self.players: Set[AbstractWorkableAudioPlayer] = set()
+        self.players: Set[AbstractAudioPlayer] = set()
 
     def run(self) -> None:
         if pyglet.options['debug_trace']:
@@ -88,7 +88,7 @@ class PlayerWorkerThread(threading.Thread):
         assert _debug('PlayerWorkerThread.notify()')
         self._rest_event.set()
 
-    def add(self, player: 'AbstractWorkableAudioPlayer') -> None:
+    def add(self, player: 'AbstractAudioPlayer') -> None:
         """
         Add a player to the PlayerWorkerThread; which will call
         `work` on it regularly. Notify the thread as well.
@@ -103,7 +103,7 @@ class PlayerWorkerThread(threading.Thread):
 
         self.notify()
 
-    def remove(self, player: 'AbstractWorkableAudioPlayer') -> None:
+    def remove(self, player: 'AbstractAudioPlayer') -> None:
         """
         Remove a player from the PlayerWorkerThread, or ignore if it does
         not exist.
