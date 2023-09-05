@@ -135,8 +135,9 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
         # As such, audio will be replayed.
         # TODO: Make best effort by using XAUDIO2_BUFFER.PlayBegin in conjunction
         # with last playback sample
-        for cx2_buffer in self._buffers:
-            self._xa2_source_voice.submit_buffer(cx2_buffer)
+        for audio_data in self._audio_data_in_use:
+            xa2_buffer = interface.create_xa2_buffer(audio_data)
+            self._xa2_source_voice.submit_buffer(xa2_buffer)
 
     def _on_flush_complete(self) -> None:
         # Remember to hold the lock when calling this
@@ -172,8 +173,9 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
 
     def _delete_now(self) -> None:
         self.driver._xa2_driver.return_voice(self._xa2_source_voice)
-        self._xa2_source_voice = None
         self.driver = None
+        self._xa2_source_voice = None
+        self._audio_data_in_use.clear()
 
     def delete(self) -> None:
         assert _debug("Xaudio2 delete")
