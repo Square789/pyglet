@@ -37,6 +37,7 @@ class DirectSoundDriver(AbstractAudioDriver):
     def __init__(self):
         self._ds_driver = interface.DirectSoundDriver()
         self._ds_listener = self._ds_driver.create_listener()
+        self._listener = DirectSoundListener(self._ds_listener, self._ds_driver.primary_buffer)
 
         assert self._ds_driver is not None
         assert self._ds_listener is not None
@@ -55,7 +56,7 @@ class DirectSoundDriver(AbstractAudioDriver):
     def get_listener(self):
         assert self._ds_driver is not None
         assert self._ds_listener is not None
-        return DirectSoundListener(self._ds_listener, self._ds_driver.primary_buffer)
+        return self._listener
 
     def delete(self):
         assert _debug("Deleting DirectSoundDriver")
@@ -67,13 +68,13 @@ class DirectSoundDriver(AbstractAudioDriver):
 
 
 class DirectSoundListener(AbstractListener):
-    def __init__(self, ds_listener, ds_buffer):
+    def __init__(self, ds_listener, ds_primary_buffer):
         self._ds_listener = ds_listener
-        self._ds_buffer = ds_buffer
+        self._ds_primary_buffer = ds_primary_buffer
 
     def _set_volume(self, volume):
         self._volume = volume
-        self._ds_buffer.volume = _gain2db(volume)
+        self._ds_primary_buffer.volume = _gain2db(volume)
 
     def _set_position(self, position):
         self._position = position
@@ -114,9 +115,8 @@ class DirectSoundAudioPlayer(AbstractAudioPlayer):
         # should lag behind and cause it to underrun.
         self._playing = False
 
-        # Indexes into DSound circular buffer.  Complications ensue wrt each
-        # other to avoid writing over the play cursor.  See _get_write_size and
-        # write().
+        # Actual cursors for the circular DSBuffer. Will never exceed
+        # `self._buffer_size`.
         self._play_cursor_ring = 0
         self._write_cursor_ring = 0
 
@@ -141,7 +141,8 @@ class DirectSoundAudioPlayer(AbstractAudioPlayer):
 
         # DSound buffer
         # Make it hold 1.5 seconds of data.
-        buffer_size = max(32768, int(source.audio_format.bytes_per_second * 1.5))
+        buffer_size = source.audio_format.align(
+            max(32768, int(source.audio_format.bytes_per_second * 1.5)))
         self._ds_buffer = self._ds_driver.create_buffer(source.audio_format, buffer_size)
         self._ds_buffer.current_position = 0
         self._buffer_size = buffer_size
@@ -150,7 +151,7 @@ class DirectSoundAudioPlayer(AbstractAudioPlayer):
 
         # Once we drop below a third; so 0.5 seconds of buffer space are unused, make an effort
         # to refill most of that empty space up again.
-        self._tolerable_empty_space = min(1048576, buffer_size // 3)
+        self._tolerable_empty_space = buffer_size // 3
 
     def delete(self):
         self.driver.worker.remove(self)
