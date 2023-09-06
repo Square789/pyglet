@@ -226,8 +226,7 @@ class XAudio2VoiceCallback(com.COMObject):
         self.player = player
 
     def OnBufferEnd(self, pBufferContext):
-        if self.player is not None:
-            self.player.on_buffer_end(pBufferContext)
+        self.player.on_buffer_end(pBufferContext)
 
     def OnVoiceError(self, pBufferContext, hresult):
         raise Exception(f"Error occurred during audio playback: {hresult}")

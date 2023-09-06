@@ -172,6 +172,7 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
         assert _debug("return XAudio2 _flush")
 
     def _delete_now(self) -> None:
+        assert _debug("XAudio2: Player deleted, returning voice")
         self.driver._xa2_driver.return_voice(self._xa2_source_voice)
         self.driver = None
         self._xa2_source_voice = None

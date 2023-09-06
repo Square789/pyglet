@@ -149,7 +149,7 @@ class _AudioDataBuffer:
 
 class PulseAudioPlayer(AbstractAudioPlayer):
     def __init__(self, source: 'Source', player: 'Player', driver: 'PulseAudioDriver') -> None:
-        super(PulseAudioPlayer, self).__init__(source, player)
+        super().__init__(source, player)
         self.driver = driver
 
         self._volume = 1.0
@@ -159,13 +159,16 @@ class PulseAudioPlayer(AbstractAudioPlayer):
 
         self._read_index_valid = False # True only if buffer has non-stale data
         # TODO: Becomes valid again when?
+
         self._pyglet_source_exhausted = False
         self._pending_bytes = 0
         self._audio_data_buffer = _AudioDataBuffer(audio_format)
-        self._audio_data_lock = threading.Lock()
+
         # A lock that should be held whenever the audio data buffer is accessed, as well as
         # when stuff involving _pyglet_source_exhausted and _pending_bytes runs.
         # Should prevent The PA callback from interfering with the work method.
+        self._audio_data_lock = threading.Lock()
+
         self._clear_write = False
         self._playing = False
 
@@ -218,13 +221,14 @@ class PulseAudioPlayer(AbstractAudioPlayer):
             self._audio_data_lock.release()
             return
 
-        rs = self._audio_data_buffer.get_ideal_refill_size(self._pending_bytes)
+        refill_size = self._audio_data_buffer.get_ideal_refill_size(self._pending_bytes)
         self._audio_data_lock.release()
-        if rs == 0:
+        if refill_size == 0:
             return
 
-        assert _debug(f"PulseAudioPlayer: Getting {rs}B of audio data")
-        new_data = self.source.get_audio_data(rs)
+        refill_size = self.source.audio_format.align(refill_size)
+        assert _debug(f"PulseAudioPlayer: Getting {refill_size}B of audio data")
+        new_data = self.source.get_audio_data(refill_size)
 
         self._audio_data_lock.acquire()
         if new_data is None:
