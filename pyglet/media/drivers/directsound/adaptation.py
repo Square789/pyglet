@@ -141,17 +141,11 @@ class DirectSoundAudioPlayer(AbstractAudioPlayer):
 
         # DSound buffer
         # Make it hold 1.5 seconds of data.
-        buffer_size = source.audio_format.align(
-            max(32768, int(source.audio_format.bytes_per_second * 1.5)))
-        self._ds_buffer = self._ds_driver.create_buffer(source.audio_format, buffer_size)
+        self._buffer_size = self._singlebuffer_ideal_size
+        self._ds_buffer = self._ds_driver.create_buffer(source.audio_format, self._buffer_size)
         self._ds_buffer.current_position = 0
-        self._buffer_size = buffer_size
 
-        assert self._ds_buffer.buffer_size == buffer_size
-
-        # Once we drop below a third; so 0.5 seconds of buffer space are unused, make an effort
-        # to refill most of that empty space up again.
-        self._tolerable_empty_space = buffer_size // 3
+        assert self._ds_buffer.buffer_size == self._buffer_size
 
     def delete(self):
         self.driver.worker.remove(self)
@@ -213,12 +207,12 @@ class DirectSoundAudioPlayer(AbstractAudioPlayer):
         # While we are still playing / waiting for the on_eos to be dispatched for
         # the player to stop, the buffer continues playing. Ensure that silence is
         # filled.
-        if (empty := self._get_empty_buffer_space()) > self._tolerable_empty_space:
-            self._write(None, empty)
+        if (used := self._get_used_buffer_space()) < self._buffered_data_comfortable_limit:
+            self._write(None, self._buffer_size - used)
 
     def _maybe_fill(self):
-        if (empty_size := self._get_empty_buffer_space()) > self._tolerable_empty_space:
-            self._refill(self.source.audio_format.align(empty_size))
+        if (used := self._get_used_buffer_space()) < self._buffered_data_comfortable_limit:
+            self._refill(self.source.audio_format.align(self._buffer_size - used))
 
     def _refill(self, size):
         """Refill the next `size` bytes in the buffer using the source.
@@ -247,8 +241,8 @@ class DirectSoundAudioPlayer(AbstractAudioPlayer):
             self._play_cursor += play_cursor_ring - self._play_cursor_ring
         self._play_cursor_ring = play_cursor_ring
 
-    def _get_empty_buffer_space(self):
-        return self._buffer_size - max(self._write_cursor - self._play_cursor, 0)
+    def _get_used_buffer_space(self):
+        return max(self._write_cursor - self._play_cursor, 0)
 
     def _write(self, audio_data, region_size):
         """Write data into the circular DSBuffer, starting at _write_cursor_ring.

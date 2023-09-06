@@ -98,11 +98,11 @@ class PulseAudioListener(AbstractListener):
 
 
 class _AudioDataBuffer:
-    def __init__(self, audio_fmt: 'AudioFormat') -> None:
+    def __init__(self, ideal_size: int, comfortable_limit: int) -> None:
         self.available = 0
         self.virtual_write_index = 0
-        self.ideal_size = audio_fmt.align(int(audio_fmt.bytes_per_second * 1.5))
-        self.comfortable_limit = audio_fmt.align(int(audio_fmt.bytes_per_second * 1.0))
+        self._ideal_size = ideal_size
+        self._comfortable_limit = comfortable_limit
         self._data: Deque['AudioData'] = deque()
         self._first_read_offset = 0
 
@@ -114,8 +114,8 @@ class _AudioDataBuffer:
 
     def get_ideal_refill_size(self, virtual_required: int = 0) -> int:
         virtual_available = self.available - virtual_required
-        if virtual_available < self.comfortable_limit:
-            return self.ideal_size - virtual_available
+        if virtual_available < self._comfortable_limit:
+            return self._ideal_size - virtual_available
         return 0
 
     def add_data(self, d: 'AudioData') -> None:
@@ -162,7 +162,8 @@ class PulseAudioPlayer(AbstractAudioPlayer):
 
         self._pyglet_source_exhausted = False
         self._pending_bytes = 0
-        self._audio_data_buffer = _AudioDataBuffer(audio_format)
+        self._audio_data_buffer = _AudioDataBuffer(self._singlebuffer_ideal_size,
+                                                   self._buffered_data_comfortable_limit)
 
         # A lock that should be held whenever the audio data buffer is accessed, as well as
         # when stuff involving _pyglet_source_exhausted and _pending_bytes runs.
@@ -213,7 +214,7 @@ class PulseAudioPlayer(AbstractAudioPlayer):
 
     def _maybe_fill_audio_data_buffer(self) -> None:
         # As with all other backends, make sure there's always around 1.5s of audio data in memory.
-        # PA as opposed to the other backends works on requests which are very small (or on a
+        # PA as opposed to the other backends works on requests which are relatively small (or on a
         # polling model not used here which also requires the client to adjust to an ideal remaining
         # space), so this chops up blocks in an attempt of not hitting source.get_audio_data too often.
         self._audio_data_lock.acquire()

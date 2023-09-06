@@ -86,12 +86,6 @@ class OpenALListener(AbstractListener):
 
 
 class OpenALAudioPlayer(AbstractAudioPlayer):
-    COMFORTABLE_BUFFER_LIMIT = 1.0
-    """How much unplayed data should be queued on the source through various
-    buffers at all times, in seconds.
-    Once this value is understepped, more data will be requested and added.
-    """
-
     def __init__(self, driver: 'OpenALDriver', source: 'Source', player: 'Player') -> None:
         super().__init__(source, player)
         self.driver = driver
@@ -122,10 +116,6 @@ class OpenALAudioPlayer(AbstractAudioPlayer):
 
         # Deque of the currently queued buffer's sizes
         self._queued_buffer_sizes = deque()
-
-        # Request ~500ms of audio data per refill
-        fmt = source.audio_format
-        self._ideal_buffer_size = fmt.align(int(fmt.bytes_per_second * 0.5))
 
     def delete(self) -> None:
         if self.alsource is not None:
@@ -203,8 +193,7 @@ class OpenALAudioPlayer(AbstractAudioPlayer):
             return False
 
         remaining_bytes = self._write_cursor - self._play_cursor
-        bytes_per_second = self.source.audio_format.bytes_per_second
-        return remaining_bytes / bytes_per_second < self.COMFORTABLE_BUFFER_LIMIT
+        return remaining_bytes < self._buffered_data_comfortable_limit
 
     def get_time(self) -> float:
         return self._play_cursor / self.source.audio_format.bytes_per_second

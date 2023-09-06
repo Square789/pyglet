@@ -118,11 +118,6 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
 
         self._xa2_source_voice = self.driver._xa2_driver.get_source_voice(source.audio_format, self)
 
-        # About 1.5s of audio data buffered at all times, like other backends.
-        self.max_buffer_count = 3
-        self._buffer_size = self.source.audio_format.align(
-            int(source.audio_format.bytes_per_second * 0.5))
-
     def on_driver_destroy(self) -> None:
         self.stop()
         self._xa2_source_voice = None
@@ -268,7 +263,7 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
         compensation_time = self.get_audio_time_diff()
 
         self._lock.release()
-        audio_data = self.source.get_audio_data(self._buffer_size, compensation_time)
+        audio_data = self.source.get_audio_data(self._ideal_buffer_size, compensation_time)
         self._lock.acquire()
 
         if audio_data is None:
@@ -297,7 +292,7 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
 
     def _needs_refill(self) -> bool:
         return (not self._pyglet_source_exhausted and
-                len(self._audio_data_in_use) < self.max_buffer_count)
+                len(self._audio_data_in_use) < self._ideal_queued_buffer_count)
 
     def prefill_audio(self) -> None:
         self.work()
