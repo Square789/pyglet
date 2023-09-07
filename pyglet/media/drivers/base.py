@@ -1,6 +1,5 @@
 from collections import deque
 import math
-import time
 import weakref
 from abc import ABCMeta, abstractmethod
 
@@ -78,7 +77,46 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         self.source = weakref.proxy(source)
 
     @abstractmethod
+    def prefill_audio(self):
+        """Prefill the audio buffer with audio data.
+
+        This method is called before the audio player starts in order to
+        have it play as soon as possible.
+        """
+        # It is illegal to call this method while the player is playing.
+
+    @abstractmethod
     def work(self):
+        """Ran regularly by the worker thread. This method should fill up
+        the player's buffers if required, and dispatch any necessary events.
+        """
+        # Implementing this method in tandem with the others safely is prone to pitfalls,
+        # so here's some hints:
+        # It may get called from the worker thread. While that happens, the worker thread
+        # will hold its operation lock.
+        # These things may happen to the player while `work` is being called:
+        #
+        # It may get paused/unpaused.
+        # - Receiving data after getting paused/unpaused is typically not a problem.
+        #   Realistically, this won't happen as all implementations include a
+        #   `self.driver.worker.remove/add(self)` snippet in their `play`/`pause`
+        #   implementations.
+        #
+        # It may *not* get cleared.
+        # - It is illegal to call clear on an unpaused player, and only playing players
+        #   are in the worker thread.
+        #
+        # It may get deleted.
+        # - In this case, attempting to continue with the data will cause some sort of error
+        #   To combat this, all `delete` implementations contain a form of
+        #   `self.driver.worker.remove(self)`.
+        # This method may also be called from the main thread through `prefill_audio`.
+        # This will only happen before the player is started: `work` will never interfere
+        # with itself.
+        # Audioplayers are not threadsafe and should only be interacted with through the main
+        # thread.
+        # TODO: That last line is more directed to pyglet users, maybe throw it into the docs
+        # somewhere.
         pass
 
     @abstractmethod
@@ -146,14 +184,6 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         """
         while self._events and self._events[0][0] <= until_index:
             self._events.popleft()[1].sync_dispatch_to_player(self.player)
-
-    @abstractmethod
-    def prefill_audio(self):
-        """Prefill the audio buffer with audio data.
-
-        This method is called before the audio player starts in order to 
-        reduce the time it takes to fill the whole audio buffer.
-        """
 
     def get_audio_time_diff(self):
         """Queries the time difference between the audio time and the `Player`
