@@ -237,7 +237,7 @@ class OpenALSource(OpenALObject):
 
     def clear(self):
         self._set_int(al.AL_BUFFER, al.AL_NONE)
-        self.buffer_pool.return_buffers(self._owned_buffers.items())
+        self.buffer_pool.return_buffers(self._owned_buffers.values())
         self._owned_buffers.clear()
 
     def get_buffer(self):
