@@ -122,10 +122,6 @@ class AudioData:
                  duration: float = -1.0,
                  events: Optional[List['MediaEvent']] = None) -> None:
 
-        if length == 0:
-            print("WARNING: empty audiodata")
-            # TODO: absolutely remove this, just for a loud scream in case something provides empty AD
-
         if isinstance(data, bytes):
             # bytes are treated specially by ctypes and can be cast to a void pointer, get
             # their content's address like this
@@ -150,16 +146,6 @@ class AudioData:
         self.timestamp = timestamp
         self.duration = duration
         self.events = [] if events is None else events
-
-    # def __eq__(self, other) -> bool:
-    #     raise RuntimeError("AudioData compared?")
-    #     if isinstance(other, AudioData):
-    #         return (self.data == other.data and
-    #                 self.length == other.length and
-    #                 self.timestamp == other.timestamp and
-    #                 self.duration == other.duration and
-    #                 self.events == other.events)
-    #     return NotImplemented
 
 
 class SourceInfo:
