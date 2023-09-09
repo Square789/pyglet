@@ -428,7 +428,10 @@ StreamingSource = Source
 
 
 class DeadSource(Source):
-    """A source with a duration of 0, providing no audio data at all."""
+    """A source with a duration of 0 and no audio format, providing no audio
+    data at all.
+    """
+
     def __init__(self) -> None:
         super().__init__()
         self._duration = 0.0

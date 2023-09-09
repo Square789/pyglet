@@ -110,6 +110,11 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         # - In this case, attempting to continue with the data will cause some sort of error
         #   To combat this, all `delete` implementations contain a form of
         #   `self.driver.worker.remove(self)`.
+        #
+        # NOTE: In order for these calls to be more reliable, `remove` should be the first
+        # statement in such implementations and `add` the last one, to ensure that `work`
+        # will not be run/not start after/before player attributes have been changed.
+        #
         # This method may also be called from the main thread through `prefill_audio`.
         # This will only happen before the player is started: `work` will never interfere
         # with itself.
