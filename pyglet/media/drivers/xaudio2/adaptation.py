@@ -94,7 +94,7 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
         self._flush_operation = None
 
         # Need to cache these because pyglet API allows update separately, but
-        # DSound requires both to be set at once.
+        # XAudio2 requires both to be set at once.
         self._cone_inner_angle = 360
         self._cone_outer_angle = 360
 

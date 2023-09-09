@@ -213,10 +213,10 @@ class PulseAudioPlayer(AbstractAudioPlayer):
         self.stream.mainloop.signal()
 
     def _maybe_fill_audio_data_buffer(self) -> None:
-        # As with all other backends, make sure there's always around 1.5s of audio data in memory.
         # PA as opposed to the other backends works on requests which are relatively small (or on a
         # polling model not used here which also requires the client to adjust to an ideal remaining
-        # space), so this chops up blocks in an attempt of not hitting source.get_audio_data too often.
+        # space), so this chops up AudioData in an attempt of not hitting source.get_audio_data too
+        # often.
         self._audio_data_lock.acquire()
         if self._pyglet_source_exhausted:
             self._audio_data_lock.release()

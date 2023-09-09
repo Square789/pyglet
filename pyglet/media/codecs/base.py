@@ -221,7 +221,7 @@ class Source:
         """
         return self._duration
 
-    def play(self) -> None:
+    def play(self) -> 'Player':
         """Play the source.
 
         This is a convenience method which creates a Player for
@@ -334,17 +334,19 @@ class Source:
         audio frame in the returned data.
 
         A source is precise if - for an aligned request of ``x`` bytes - it
-        returns:
+        returns:\\
+
           - If ``x`` or more bytes are available, ``x`` bytes.
           - If not enough bytes are available anymore, ``r`` bytes where
             ``r < x`` and ``r`` is aligned.
 
         A source is **not** precise if it does any of these:
-          - Returns less than ``x`` bytes for an aligned request of ``x``
+
+          - Return less than ``x`` bytes for an aligned request of ``x``
             bytes although data still remains so that an additional request
             would return additional :class:`.AudioData` / not ``None``.
-          - Returns more bytes than requested.
-          - Returns an unaligned amount of bytes for an aligned request.
+          - Return more bytes than requested.
+          - Return an unaligned amount of bytes for an aligned request.
 
         If this method returns ``False``, pyglet will wrap the source in an
         alignment-forcing buffer creating additional overhead.
@@ -388,7 +390,7 @@ class Source:
         """Return the ``Source`` to be used as the source for a player.
 
         Default implementation returns ``self`` if this source is precise as
-        specified by :method:`is_precise` or if the ``imprecise_ok`` argument
+        specified by :meth:`is_precise` or if the ``imprecise_ok`` argument
         is given. Otherwise, a new :class:`PreciseStreamingSource` wrapping
         this source is returned.
 
@@ -407,7 +409,7 @@ class Source:
         Args:
             num_bytes (int): The requested amount of bytes, returned
                 amount may be lower or higher. See the docstring of
-                :method:`is_precise` for additional information.
+                :meth:`is_precise` for additional information.
             compensation_time (float): Time in sec to compensate due to a
                 difference between the master clock and the audio clock.
 

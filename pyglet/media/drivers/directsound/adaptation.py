@@ -47,11 +47,7 @@ class DirectSoundDriver(AbstractAudioDriver):
 
     def create_audio_player(self, source, player):
         assert self._ds_driver is not None
-        # We increase IDirectSound refcount for each AudioPlayer instantiated
-        # This makes sure the AudioPlayer still has a valid _native_dsound to
-        # clean-up itself during tear-down.
-        self._ds_driver._native_dsound.AddRef()
-        return DirectSoundAudioPlayer(self, self._ds_driver, source, player)
+        return DirectSoundAudioPlayer(self, source, player)
 
     def get_listener(self):
         assert self._ds_driver is not None
@@ -63,7 +59,9 @@ class DirectSoundDriver(AbstractAudioDriver):
         self.worker.stop()
         # Destroy listener before destroying driver
         self._ds_listener.delete()
+        self._ds_listener = None
         self._ds_driver.delete()
+        self._ds_driver = None
         assert _debug("DirectSoundDriver deleted.")
 
 
@@ -94,26 +92,23 @@ class DirectSoundListener(AbstractListener):
 
 
 class DirectSoundAudioPlayer(AbstractAudioPlayer):
-    # Need to cache these because pyglet API allows update separately, but
-    # DSound requires both to be set at once.
-    _cone_inner_angle = 360
-    _cone_outer_angle = 360
-
-    min_buffer_size = 9600
-
-    def __init__(self, driver, ds_driver, source, player):
+    def __init__(self, driver, source, player):
         super().__init__(source, player)
 
         # We keep here a strong reference because the AudioDriver is anyway
         # a singleton object which will only be deleted when the application
         # shuts down. The AudioDriver does not keep a ref to the AudioPlayer.
         self.driver = driver
-        self._ds_driver = ds_driver
 
         # Desired play state. As the DS Buffer is just a circular buffer, it is
         # not possible to have it stop at an exact position if the source
         # should lag behind and cause it to underrun.
         self._playing = False
+
+        # Need to cache these because pyglet API allows update separately, but
+        # DSound requires both to be set at once.
+        self._cone_inner_angle = 360
+        self._cone_outer_angle = 360
 
         # Actual cursors for the circular DSBuffer. Will never exceed
         # `self._buffer_size`.
@@ -140,19 +135,16 @@ class DirectSoundAudioPlayer(AbstractAudioPlayer):
         self._has_underrun = False
 
         # DSound buffer
-        # Make it hold 1.5 seconds of data.
         self._buffer_size = self._singlebuffer_ideal_size
-        self._ds_buffer = self._ds_driver.create_buffer(source.audio_format, self._buffer_size)
+        self._ds_buffer = self.driver._ds_driver.create_buffer(source.audio_format, self._buffer_size)
         self._ds_buffer.current_position = 0
 
         assert self._ds_buffer.buffer_size == self._buffer_size
 
     def delete(self):
-        self.driver.worker.remove(self)
-        self._ds_buffer.delete()
-        # Decrease IDirectSound refcount.
-        # Counteracts AddRef in `create_audio_player`
-        self.driver._ds_driver._native_dsound.Release()
+        if self.driver._ds_driver is not None:
+            self.driver.worker.remove(self)
+            self._ds_buffer.delete()
 
     def play(self):
         assert _debug('DirectSound play')
