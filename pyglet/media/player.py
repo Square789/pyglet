@@ -20,32 +20,30 @@ class PlaybackTimer:
     """
 
     def __init__(self):
-        """Initialize the timer with time 0."""
-        self._time = 0.0
-        self._systime = None
+        self._elapsed = 0.0
+        self._started_at = None
 
     def start(self):
         """Start the timer."""
-        self._systime = time.time()
+        self._started_at = time.perf_counter()
 
     def pause(self):
         """Pause the timer."""
-        self._time = self.get_time()
-        self._systime = None
+        self._elapsed = self.get_time()
+        self._started_at = None
 
     def reset(self):
         """Reset the timer to 0."""
-        self._time = 0.0
-        if self._systime is not None:
-            self._systime = time.time()
+        self._elapsed = 0.0
+        if self._started_at is not None:
+            self._started_at = time.perf_counter()
 
     def get_time(self):
         """Get the elapsed time."""
-        if self._systime is None:
-            now = self._time
-        else:
-            now = time.time() - self._systime + self._time
-        return now
+        if self._started_at is None:
+            return self._elapsed
+
+        return time.perf_counter() - self._started_at + self._elapsed
 
     def set_time(self, value):
         """
@@ -55,7 +53,7 @@ class PlaybackTimer:
             value (float): the new elapsed time value
         """
         self.reset()
-        self._time = value
+        self._elapsed = value
 
 
 class _PlayerProperty:
@@ -593,8 +591,6 @@ class Player(pyglet.event.EventDispatcher):
             if self.source:
                 # Reset source to the beginning
                 self.seek(0.0)
-            if self._audio_player:
-                self._audio_player.clear()
             self._set_playing(was_playing)
 
         else:
