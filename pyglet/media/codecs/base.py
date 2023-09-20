@@ -38,16 +38,32 @@ class AudioFormat:
         self.bytes_per_second = self.bytes_per_frame * sample_rate
 
         self.bytes_per_sample = self.bytes_per_frame
-        """This attribute is kept for compatibility and should not be used.
-        For the actual amount of bytes per sample, divide `sample_size` by eight.
-        This value contains the bytes per audio frame, and using `bytes_per_frame` should
-        be preferred.
+        """This attribute is kept for compatibility and should not be used due
+        to a terminology error.
+        This value contains the bytes per audio frame, and using
+        `bytes_per_frame` should be preferred.
+        For the actual amount of bytes per sample, divide `sample_size` by
+        eight.
         """
 
     def align(self, num_bytes: int) -> int:
-        """Aligns a given amount of bytes to the audio frame size of this format.
+        """Align a given amount of bytes to the audio frame size of this
+        audio format, downwards.
         """
         return num_bytes - (num_bytes % self.bytes_per_frame)
+
+    def align_ceil(self, num_bytes: int) -> int:
+        """Align a given amount of bytes to the audio frame size of this
+        audio format, upwards.
+        """
+        return num_bytes + (-num_bytes % self.bytes_per_frame)
+
+    def timestamp_to_bytes_aligned(self, timestamp: float) -> int:
+        """Given a timestamp, return the amount of bytes that an emitter with
+        this audio format would have to have played to reach it, aligned
+        to the audio frame size.
+        """
+        return self.align(int(timestamp * self.bytes_per_second))
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, AudioFormat):
