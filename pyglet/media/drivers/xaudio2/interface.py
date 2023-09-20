@@ -385,6 +385,12 @@ class XA2SourceVoice:
         return self._voice_state.BuffersQueued
 
     @property
+    def samples_played(self):
+        """Get the amount of samples played by the voice."""
+        self._voice.GetState(ctypes.byref(self._voice_state), 0)
+        return self._voice_state.SamplesPlayed
+
+    @property
     def volume(self):
         vol = c_float()
         self._voice.GetVolume(ctypes.byref(vol))

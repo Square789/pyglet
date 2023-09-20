@@ -260,10 +260,9 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
         so make sure it's held upon calling.
         """
         assert _debug(f"XAudio2: Retrieving new buffer")
-        compensation_time = self.get_audio_time_diff()
 
         self._lock.release()
-        audio_data = self.source.get_audio_data(self._ideal_buffer_size, compensation_time)
+        audio_data, _ = self._get_and_compensate_audio_data(self._ideal_buffer_size, None)
         self._lock.acquire()
 
         if audio_data is None:

@@ -229,7 +229,7 @@ class PulseAudioPlayer(AbstractAudioPlayer):
 
         refill_size = self.source.audio_format.align(refill_size)
         assert _debug(f"PulseAudioPlayer: Getting {refill_size}B of audio data")
-        new_data = self.source.get_audio_data(refill_size)
+        new_data, _ = self._get_and_compensate_audio_data(refill_size, None)
 
         self._audio_data_lock.acquire()
         if new_data is None:
@@ -333,13 +333,13 @@ class PulseAudioPlayer(AbstractAudioPlayer):
             return self.stream.get_timing_info()
 
     def _get_read_index(self) -> int:
-        timing_info = self._update_and_get_timing_info
+        timing_info = self._update_and_get_timing_info()
         read_index = 0 if timing_info is None else timing_info.read_index
         assert _debug('_get_read_index ->', read_index)
         return read_index
 
     def _get_write_index(self) -> int:
-        timing_info = self._update_and_get_timing_info
+        timing_info = self._update_and_get_timing_info()
         write_index = 0 if timing_info is None else timing_info.write_index
         assert _debug('_get_write_index ->', write_index)
         return write_index

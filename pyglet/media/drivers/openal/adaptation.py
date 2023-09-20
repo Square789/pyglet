@@ -2,6 +2,7 @@ from collections import deque
 from typing import TYPE_CHECKING, List, Optional, Tuple
 import weakref
 
+from pyglet.media.codecs.base import AudioData
 from pyglet.media.drivers.base import AbstractAudioDriver, AbstractAudioPlayer, MediaEvent
 from pyglet.media.drivers.listener import AbstractListener
 from pyglet.media.drivers.openal import interface
@@ -106,6 +107,8 @@ class OpenALAudioPlayer(AbstractAudioPlayer):
         # Cursor position of end of the last queued AL buffer.
         self._write_cursor = 0
 
+        self._compensated_bytes = 0
+
         # Whether the source has been exhausted of all data.
         # Don't bother trying to refill then and brace for eos.
         self._pyglet_source_exhausted = False
@@ -153,6 +156,7 @@ class OpenALAudioPlayer(AbstractAudioPlayer):
         self._buffer_cursor = 0
         self._play_cursor = 0
         self._write_cursor = 0
+        self._compensated_bytes = 0
         self._pyglet_source_exhausted = False
         self._has_underrun = False
         self._queued_buffer_sizes.clear()
@@ -170,7 +174,7 @@ class OpenALAudioPlayer(AbstractAudioPlayer):
     def work(self) -> None:
         self._check_processed_buffers()
         self._update_play_cursor()
-        self.dispatch_media_events(self._play_cursor)
+        self.dispatch_media_events(self.get_perceived_play_cursor())
 
         if self._pyglet_source_exhausted:
             if not self._has_underrun and not self.alsource.is_playing:
@@ -195,35 +199,29 @@ class OpenALAudioPlayer(AbstractAudioPlayer):
         remaining_bytes = self._write_cursor - self._play_cursor
         return remaining_bytes < self._buffered_data_comfortable_limit
 
-    def get_time(self) -> float:
-        return self._play_cursor / self.source.audio_format.bytes_per_second
+    def get_perceived_play_cursor(self):
+        return self._play_cursor - self._compensated_bytes
 
     def _refill(self) -> None:
-        compensation_time = self.get_audio_time_diff()
-        audio_data = self.source.get_audio_data(self._ideal_buffer_size, compensation_time)
+        audio_data, comp = self._get_and_compensate_audio_data(self._ideal_buffer_size,
+                                                               self.get_time())
+        self._compensated_bytes += comp
+
         if audio_data is None:
             self._pyglet_source_exhausted = True
-            # We could schedule the on_eos event at the very end of written data here, but
-            # this would not check whether the source actually stopped playing.
-            # Of course logic dictates if it reports the play position being into it as far
-            # as its last buffer's length, it's unlikely to be playing anymore, but just be extra
-            # safe and dispatch it explicitly in `work`
-            # self._events.append((self._write_cursor, MediaEvent('on_eos')))
             return
 
         # We got new audio data; first queue its events
         self.append_events(self._write_cursor, audio_data.events)
 
-        refill_length = audio_data.length
-
         # Get, fill and queue OpenAL buffer using the entire AudioData
         buf = self.alsource.get_buffer()
-        buf.data(audio_data.pointer, self.source.audio_format, refill_length)
+        buf.data(audio_data.pointer, self.source.audio_format, audio_data.length)
         self.alsource.queue_buffer(buf)
 
         # Adjust the write cursor and memorize buffer length
-        self._write_cursor += refill_length
-        self._queued_buffer_sizes.append(refill_length)
+        self._write_cursor += audio_data.length
+        self._queued_buffer_sizes.append(audio_data.length)
 
     def prefill_audio(self) -> None:
         while self._should_refill():

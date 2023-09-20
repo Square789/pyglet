@@ -111,6 +111,8 @@ class Player(pyglet.event.EventDispatcher):
         # Desired play state (not an indication of actual state).
         self._playing = False
 
+        self.last_seek_time = 0.0
+
         self._timer = PlaybackTimer()
         #: Loop the current source indefinitely or until
         #: :meth:`~Player.next_source` is called. Defaults to ``False``.
@@ -320,6 +322,8 @@ class Player(pyglet.event.EventDispatcher):
 
         self._timer.set_time(timestamp)
         self._source.seek(timestamp)
+        self.last_seek_time = timestamp
+
         if self._audio_player:
             # XXX: According to docstring in AbstractAudioPlayer this cannot
             # be called when the player is not stopped
