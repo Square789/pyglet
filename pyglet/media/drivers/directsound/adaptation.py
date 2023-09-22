@@ -120,7 +120,6 @@ class DirectSoundAudioPlayer(AbstractAudioPlayer):
         # happening).
         self._write_cursor = 0
         self._play_cursor = 0
-        self._compensated_bytes = 0
 
         # Cursor position of where the source ran out.
         # We are done once the play cursor crosses it.
@@ -174,19 +173,15 @@ class DirectSoundAudioPlayer(AbstractAudioPlayer):
         self._playing = False
         self._play_cursor_ring = self._write_cursor_ring = 0
         self._play_cursor = self._write_cursor = 0
-        self._compensated_bytes = 0
         self._eos_cursor = None
         self._possible_eos_cursor = 0
         self._has_underrun = False
-
-    def get_perceived_play_cursor(self):
-        return self._play_cursor - self._compensated_bytes
 
     def work(self):
         assert self._playing
 
         self._update_play_cursor()
-        self.dispatch_media_events(self.get_perceived_play_cursor())
+        self.dispatch_media_events(self._play_cursor)
 
         if self._eos_cursor is None:
             self._maybe_fill()
@@ -212,8 +207,7 @@ class DirectSoundAudioPlayer(AbstractAudioPlayer):
         """Refill the next `size` bytes in the buffer using the source.
         `size` must be aligned.
         """
-        audio_data, comp = self._get_and_compensate_audio_data(size, self.get_time())
-        self._compensated_bytes += comp
+        audio_data = self._get_and_compensate_audio_data(size, self._play_cursor)
         if audio_data is None:
             assert _debug('DirectSoundAudioPlayer: Out of audio data')
             if self._eos_cursor is None:

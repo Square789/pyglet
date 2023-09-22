@@ -107,8 +107,6 @@ class OpenALAudioPlayer(AbstractAudioPlayer):
         # Cursor position of end of the last queued AL buffer.
         self._write_cursor = 0
 
-        self._compensated_bytes = 0
-
         # Whether the source has been exhausted of all data.
         # Don't bother trying to refill then and brace for eos.
         self._pyglet_source_exhausted = False
@@ -156,7 +154,6 @@ class OpenALAudioPlayer(AbstractAudioPlayer):
         self._buffer_cursor = 0
         self._play_cursor = 0
         self._write_cursor = 0
-        self._compensated_bytes = 0
         self._pyglet_source_exhausted = False
         self._has_underrun = False
         self._queued_buffer_sizes.clear()
@@ -174,38 +171,39 @@ class OpenALAudioPlayer(AbstractAudioPlayer):
     def work(self) -> None:
         self._check_processed_buffers()
         self._update_play_cursor()
-        self.dispatch_media_events(self.get_perceived_play_cursor())
+        self.dispatch_media_events(self._play_cursor)
 
         if self._pyglet_source_exhausted:
             if not self._has_underrun and not self.alsource.is_playing:
                 self._has_underrun = True
                 assert _debug("OpenALAudioPlayer: Dispatching eos")
                 MediaEvent('on_eos').sync_dispatch_to_player(self.player)
-        else:
-            refilled = False
-            while self._should_refill():
-                self._refill()
-                refilled = True
+            return
 
-            if refilled and not self.alsource.is_playing:
-                # Very unlikely case where the refill was delayed by so much the
-                # source underran and stopped. If it did, restart it.
-                self.alsource.play()
+        refilled = self._maybe_refill()
 
-    def _should_refill(self) -> bool:
+        if refilled and not self.alsource.is_playing:
+            # Very unlikely case where the refill was delayed by so much the
+            # source underran and stopped. If it did, restart it.
+            self.alsource.play()
+
+    def _maybe_refill(self) -> bool:
         if self._pyglet_source_exhausted:
             return False
 
         remaining_bytes = self._write_cursor - self._play_cursor
-        return remaining_bytes < self._buffered_data_comfortable_limit
+        if remaining_bytes >= self._buffered_data_comfortable_limit:
+            return False
 
-    def get_perceived_play_cursor(self):
-        return self._play_cursor - self._compensated_bytes
+        missing_bytes = self._singlebuffer_ideal_size - remaining_bytes
+        self._refill(self.source.audio_format.align_ceil(missing_bytes))
+        return True
 
-    def _refill(self) -> None:
-        audio_data, comp = self._get_and_compensate_audio_data(self._ideal_buffer_size,
-                                                               self.get_time())
-        self._compensated_bytes += comp
+    def get_play_cursor(self):
+        return self._play_cursor
+
+    def _refill(self, refill_size) -> None:
+        audio_data = self._get_and_compensate_audio_data(refill_size, self._play_cursor)
 
         if audio_data is None:
             self._pyglet_source_exhausted = True
@@ -224,8 +222,7 @@ class OpenALAudioPlayer(AbstractAudioPlayer):
         self._queued_buffer_sizes.append(audio_data.length)
 
     def prefill_audio(self) -> None:
-        while self._should_refill():
-            self._refill()
+        self._maybe_refill()
 
     def set_volume(self, volume: float) -> None:
         self.alsource.gain = volume

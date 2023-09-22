@@ -262,7 +262,7 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
         assert _debug(f"XAudio2: Retrieving new buffer")
 
         self._lock.release()
-        audio_data, _ = self._get_and_compensate_audio_data(self._ideal_buffer_size, None)
+        audio_data = self._get_and_compensate_audio_data(self._ideal_buffer_size, None)
         self._lock.acquire()
 
         if audio_data is None:
@@ -295,10 +295,6 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
 
     def prefill_audio(self) -> None:
         self.work()
-
-    def get_time(self) -> float:
-        pass
-        # TODO look into after deciding what to do for llp time
 
     def set_volume(self, volume: float) -> None:
         self._xa2_source_voice.volume = volume

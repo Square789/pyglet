@@ -7,23 +7,17 @@ class SilentAudioPlayer(AbstractAudioPlayer):
     def delete(self):
         pass
 
-    def work(self):
-        pass
-
     def play(self):
         pass
 
     def stop(self):
         pass
 
+    def work(self):
+        pass
+
     def clear(self):
         pass
-
-    def write(self, audio_data, length):
-        pass
-
-    def get_time(self):
-        return 0
 
     def set_volume(self, volume):
         pass

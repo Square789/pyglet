@@ -58,6 +58,11 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         self.audio_sync_measurements = deque(maxlen=self.AUDIO_SYNC_REQUIRED_MEASUREMENTS)
         self.audio_sync_cumul_measurements = 0
 
+        # Bytes that have been skipped or artificially added to compensate for audio
+        # desync since initialization or the last call to `clear`.
+        # Negative when data was skipped, positive if it was padded in.
+        self._compensated_bytes = 0
+
     def on_driver_destroy(self):
         """Called before the audio driver is going to be destroyed (a planned destroy)."""
         pass
@@ -149,19 +154,31 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         # has been deleted. AudioPlayer implementations must handle this.
 
     @abstractmethod
-    def get_perceived_play_cursor(self):
-        """Return approximation of current playback time since creation or
-        last call to :meth:`clear`.
-        Any compensated time should be taken into account in the return value
-        of this method, such as creeping desync or lag created from a hang in
-        I/O.
+    def get_play_cursor(self):
+        """Get this player's play cursor/read index/byte offset.
 
-        Return ``None`` if the audio player does not know what the playback
-        time is (for example, before any valid audio data has been read).
-
-        :rtype: int
-        :return: current play cursor position, in bytes.
+        Return ``None`` when unavailable.
         """
+        # This method should not/does not need to ask the audio backend for the
+        # most recent play cursor position.
+        # It is not supposed to be accurate; accurate play cursor info is always
+        # passed into the corresponding methods from the implementation subclass.
+
+    def get_time(self):
+        """Retrieve the time in the current source the player is at, in seconds.
+        By default, calculated using :meth:`get_play_cursor`, divided by the
+        bytes per second played.
+        """
+        # See notes on `get_play_cursor` as well.
+        return self._raw_play_cursor_to_time(self.get_play_cursor())
+
+    def _raw_play_cursor_to_time(self, cursor):
+        if cursor is None:
+            return None
+        return self._to_perceived_play_cursor(cursor) / self.source.audio_format.bytes_per_second
+
+    def _to_perceived_play_cursor(self, play_cursor):
+        return play_cursor - self._compensated_bytes
 
     def _play_group(self, audio_players):
         """Begin simultaneous playback on a list of audio players."""
@@ -190,22 +207,17 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
             assert _debug(f'AbstractAudioPlayer: Adding event {event} at {event_cursor}')
             self._events.append((event_cursor, event))
 
-    def dispatch_media_events(self, until_index):
+    def dispatch_media_events(self, until_cursor):
         """Dispatch all :class:`MediaEvent`s whose index is less than or equal
-        to the specified ``until_index``.
+        to the specified ``until_cursor`` (which should be a very recent play
+        cursor position).
+        Please note that :attr:`_compensated_bytes` will be subtracted from
+        the passed ``until_cursor``.
         """
-        while self._events and self._events[0][0] <= until_index:
-            self._events.popleft()[1].sync_dispatch_to_player(self.player)
+        until_cursor = self._to_perceived_play_cursor(until_cursor)
 
-    def get_time(self):
-        """
-        Retrieve the time in the current source the player is at, in seconds.
-        By default, calculated using ``get_perceived_play_cursor``, divided
-        by the bytes per second played.
-        """
-        if (play_cursor := self.get_perceived_play_cursor()) is None:
-            return None
-        return play_cursor / self.source.audio_format.bytes_per_second
+        while self._events and self._events[0][0] <= until_cursor:
+            self._events.popleft()[1].sync_dispatch_to_player(self.player)
 
     def get_audio_time_diff(self, audio_time):
         """Query the difference between the provided time and the high
@@ -220,7 +232,7 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         immediately and all previous measurements will have been cleared.
 
         This method will return ``0, False`` if the difference is not
-        significant.
+        significant or ``audio_time`` is ``None``.
 
         :rtype: int, bool
         """
@@ -254,20 +266,22 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
 
         return 0, False
 
-    def _get_and_compensate_audio_data(self, requested_size, audio_time=None):
+    def _get_and_compensate_audio_data(self, requested_size, audio_position=None):
         """
         Retrieve a packet of `AudioData` of the given size.
         """
+        audio_time = self._raw_play_cursor_to_time(audio_position)
         desync_bytes, extreme_desync = self.get_audio_time_diff(audio_time)
 
         if desync_bytes == 0:
-            return self.source.get_audio_data(requested_size, 0.0), 0
+            return self.source.get_audio_data(requested_size, 0.0)
 
         compensated_bytes = 0
         afmt = self.source.audio_format
 
         print(f"desync, {desync_bytes=}, {extreme_desync=}")
         assert desync_bytes % afmt.bytes_per_frame == 0
+
         if desync_bytes > 0:
             # Player running ahead
             # Request at most 12ms less or only enough to not undercut the request size by 1024
@@ -280,19 +294,17 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
             )
 
             audio_data = self.source.get_audio_data(requested_size - compensated_bytes, 0.0)
-            if audio_data is None:
-                return audio_data, compensated_bytes
+            if audio_data is not None:
+                if audio_data.length < afmt.bytes_per_frame:
+                    raise RuntimeError("Partial audio frame returned?")
 
-            if audio_data.length < afmt.bytes_per_frame:
-                raise RuntimeError("Partial audio frame returned?")
+                first_frame = ctypes.string_at(audio_data.pointer, afmt.bytes_per_frame)
+                ad = bytearray(audio_data.length + compensated_bytes)
+                ad[0:compensated_bytes] = first_frame * (compensated_bytes // afmt.bytes_per_frame)
+                ad[compensated_bytes:] = audio_data.data
 
-            first_frame = ctypes.string_at(audio_data.pointer, afmt.bytes_per_frame)
-            ad = bytearray(audio_data.length + compensated_bytes)
-            ad[0:compensated_bytes] = first_frame * (compensated_bytes // afmt.bytes_per_frame)
-            ad[compensated_bytes:] = audio_data.data
-
-            audio_data = AudioData(
-                ad, len(ad), audio_data.timestamp, audio_data.duration, audio_data.events)
+                audio_data = AudioData(
+                    ad, len(ad), audio_data.timestamp, audio_data.duration, audio_data.events)
 
         elif desync_bytes < 0:
             # Player falling behind
@@ -304,26 +316,26 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
                                  else min(-desync_bytes, afmt.timestamp_to_bytes_aligned(0.012)))
 
             audio_data = self.source.get_audio_data(requested_size + compensated_bytes, 0.0)
-            if audio_data is None:
-                return audio_data, -compensated_bytes
-
-            if audio_data.length <= compensated_bytes:
-                audio_data = None
-                compensated_bytes = -audio_data.length
-            else:
-                audio_data = AudioData(
-                    ctypes.string_at(
-                        audio_data.pointer + compensated_bytes,
+            if audio_data is not None:
+                if audio_data.length <= compensated_bytes:
+                    audio_data = None
+                    compensated_bytes = -audio_data.length
+                else:
+                    audio_data = AudioData(
+                        ctypes.string_at(
+                            audio_data.pointer + compensated_bytes,
+                            audio_data.length - compensated_bytes,
+                        ),
                         audio_data.length - compensated_bytes,
-                    ),
-                    audio_data.length - compensated_bytes,
-                    audio_data.timestamp,
-                    audio_data.duration,
-                    audio_data.events,
-                )
-                compensated_bytes *= -1
+                        audio_data.timestamp,
+                        audio_data.duration,
+                        audio_data.events,
+                    )
+                    compensated_bytes *= -1
 
-        return audio_data, compensated_bytes
+        self._compensated_bytes += compensated_bytes
+
+        return audio_data
 
     def set_volume(self, volume):
         """See `Player.volume`."""

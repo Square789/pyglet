@@ -157,8 +157,7 @@ class PulseAudioPlayer(AbstractAudioPlayer):
         audio_format = source.audio_format
         assert audio_format
 
-        self._read_index_valid = False # True only if buffer has non-stale data
-        # TODO: Becomes valid again when?
+        self._latest_timing_info = None
 
         self._pyglet_source_exhausted = False
         self._pending_bytes = 0
@@ -229,7 +228,7 @@ class PulseAudioPlayer(AbstractAudioPlayer):
 
         refill_size = self.source.audio_format.align(refill_size)
         assert _debug(f"PulseAudioPlayer: Getting {refill_size}B of audio data")
-        new_data, _ = self._get_and_compensate_audio_data(refill_size, None)
+        new_data = self._get_and_compensate_audio_data(refill_size, self._get_read_index())
 
         self._audio_data_lock.acquire()
         if new_data is None:
@@ -254,25 +253,17 @@ class PulseAudioPlayer(AbstractAudioPlayer):
 
         return bytes_written
 
+    def update_play_cursor(self) -> None:
+        with self.driver.mainloop.lock:
+            self.stream.update_timing_info().wait().delete()
+            self._latest_timing_info = self.stream.get_timing_info()
+
     def work(self) -> None:
         self._maybe_write_pending()
+        self.update_play_cursor()
+        self.dispatch_media_events(self._get_read_index())
         self._maybe_fill_audio_data_buffer()
         self._maybe_write_pending()
-
-    def _process_events(self, *_) -> None:
-        if not self._events:
-            assert _debug('PulseAudioPlayer._process_events: No events')
-            return
-
-        # Assume this is called after time sync
-        timing_info = self.stream.get_timing_info()
-        if not timing_info:
-            assert _debug('PulseAudioPlayer._process_events: No timing info to process events')
-            return
-
-        read_index = timing_info.read_index
-        assert _debug(f'PulseAudioPlayer._process_events: Dispatch events at index {read_index}')
-        self.dispatch_media_events(read_index)
 
     def delete(self) -> None:
         assert _debug('PulseAudioPlayer.delete')
@@ -291,7 +282,6 @@ class PulseAudioPlayer(AbstractAudioPlayer):
         assert _debug('PulseAudioPlayer.clear')
         super().clear()
 
-        self._read_index_valid = False
         with self._audio_data_lock:
             self._clear_write = True
             # self._pending_bytes = 0
@@ -315,8 +305,8 @@ class PulseAudioPlayer(AbstractAudioPlayer):
                 self.stream.resume().wait().delete()
             assert not self.stream.is_corked()
 
-        self.driver.worker.add(self)
         self._playing = True
+        self.driver.worker.add(self)
 
     def stop(self) -> None:
         assert _debug('PulseAudioPlayer.stop')
@@ -332,31 +322,17 @@ class PulseAudioPlayer(AbstractAudioPlayer):
             self.stream.update_timing_info().wait().delete()
             return self.stream.get_timing_info()
 
-    def _get_read_index(self) -> int:
-        timing_info = self._update_and_get_timing_info()
-        read_index = 0 if timing_info is None else timing_info.read_index
-        assert _debug('_get_read_index ->', read_index)
-        return read_index
+    def _get_read_index(self) -> Optional[int]:
+        if (t_info := self._latest_timing_info) is None:
+            return None
 
-    def _get_write_index(self) -> int:
-        timing_info = self._update_and_get_timing_info()
-        write_index = 0 if timing_info is None else timing_info.write_index
-        assert _debug('_get_write_index ->', write_index)
-        return write_index
+        bps = self.source.audio_format.bytes_per_second
 
-    def get_time(self) -> float:
-        if not self._read_index_valid:
-            assert _debug('get_time <_read_index_valid = False> -> 0')
-            return 0
-
-        t_info = self._update_and_get_timing_info()
-        read_index = t_info.read_index
-        transport_usec = t_info.transport_usec
-        sink_usec = t_info.sink_usec
-
-        time = read_index / self.source.audio_format.bytes_per_second
-        time += transport_usec / 1000000.0
-        time -= sink_usec / 1000000.0
+        time = round(
+            t_info.read_index +
+            (t_info.transport_usec / 100000.0) * bps -
+            (t_info.sink_usec / 100000.0) * bps
+        )
 
         assert _debug('get_time ->', time)
         return time
