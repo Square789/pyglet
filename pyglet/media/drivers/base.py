@@ -263,6 +263,12 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
             )
             if abs(avg_diff) > self.audio_sync_minimal_difference:
                 return avg_diff, False
+        else:
+            if audio_time is not None:
+                print(
+                    f"{diff_bytes:>6}, | "
+                    f"{(diff_bytes / self.source.audio_format.bytes_per_second):>9.6f}, "
+                )
 
         return 0, False
 
@@ -318,8 +324,8 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
             audio_data = self.source.get_audio_data(requested_size + compensated_bytes, 0.0)
             if audio_data is not None:
                 if audio_data.length <= compensated_bytes:
-                    audio_data = None
                     compensated_bytes = -audio_data.length
+                    audio_data = None
                 else:
                     audio_data = AudioData(
                         ctypes.string_at(

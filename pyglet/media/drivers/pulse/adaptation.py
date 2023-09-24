@@ -269,12 +269,12 @@ class PulseAudioPlayer(AbstractAudioPlayer):
         assert _debug('PulseAudioPlayer.delete')
         self.driver.worker.remove(self)
 
-        with self.driver.mainloop.lock:
-            if self.driver.mainloop is None:
-                assert _debug('PulseAudioPlayer.delete: PulseAudioDriver already deleted.')
-                # This is fine otherwise. If the mainloop's gone, the context is gone too,
-                # having cleaned up all its streams.
-            else:
+        if self.driver.mainloop is None:
+            assert _debug('PulseAudioPlayer.delete: PulseAudioDriver already deleted.')
+            # This is fine otherwise. If the mainloop's gone, the context is gone too,
+            # having cleaned up all its streams.
+        else:
+            with self.driver.mainloop.lock:
                 self.stream.delete()
                 self.stream = None
 
