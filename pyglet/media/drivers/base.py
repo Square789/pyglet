@@ -36,13 +36,13 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         afmt = source.audio_format
         # For drivers that do not operate on buffer submission, but write calls
         # into what is effectively a single buffer exposed to pyglet
-        self._singlebuffer_ideal_size = max(32768, afmt.timestamp_to_bytes_aligned(1.0))
+        self._singlebuffer_ideal_size = max(32768, afmt.timestamp_to_bytes_aligned(0.9))
 
         # At which point a driver should try and refill data from the source
         self._buffered_data_comfortable_limit = int(self._singlebuffer_ideal_size * (2/3))
 
         # For drivers that operate on buffer submission
-        self._ideal_buffer_size = afmt.timestamp_to_bytes_aligned(0.333333)
+        self._ideal_buffer_size = afmt.timestamp_to_bytes_aligned(0.3)
         self._ideal_queued_buffer_count = 3
 
         # A deque of (play_cursor, MediaEvent)

@@ -500,7 +500,7 @@ class FFmpegSource(StreamingSource):
     SAMPLE_CORRECTION_PERCENT_MAX = 10
 
     # Maximum amount of packets to create for video and audio queues.
-    MAX_QUEUE_SIZE = 100
+    MAX_QUEUE_SIZE = 120
 
     def __init__(self, filename, file=None):
         super().__init__()
