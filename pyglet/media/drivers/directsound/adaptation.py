@@ -170,7 +170,6 @@ class DirectSoundAudioPlayer(AbstractAudioPlayer):
         assert _debug('DirectSound clear')
         super().clear()
         self._ds_buffer.current_position = 0
-        self._playing = False
         self._play_cursor_ring = self._write_cursor_ring = 0
         self._play_cursor = self._write_cursor = 0
         self._eos_cursor = None

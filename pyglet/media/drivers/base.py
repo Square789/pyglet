@@ -34,16 +34,11 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         self.player = weakref.proxy(player)
 
         afmt = source.audio_format
-        # For drivers that do not operate on buffer submission, but write calls
-        # into what is effectively a single buffer exposed to pyglet
+        # How much data should ideally be in memory ready to be played.
         self._singlebuffer_ideal_size = max(32768, afmt.timestamp_to_bytes_aligned(0.9))
 
         # At which point a driver should try and refill data from the source
         self._buffered_data_comfortable_limit = int(self._singlebuffer_ideal_size * (2/3))
-
-        # For drivers that operate on buffer submission
-        self._ideal_buffer_size = afmt.timestamp_to_bytes_aligned(0.3)
-        self._ideal_queued_buffer_count = 3
 
         # A deque of (play_cursor, MediaEvent)
         self._events = deque()
@@ -144,6 +139,7 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         The player must be stopped before calling this method.
         """
         self._events.clear()
+        self._compensated_bytes = 0
         self.audio_sync_measurements.clear()
         self.audio_sync_cumul_measurements = 0
 
@@ -155,7 +151,8 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
 
     @abstractmethod
     def get_play_cursor(self):
-        """Get this player's play cursor/read index/byte offset.
+        """Get this player's play cursor/read index/byte offset from
+        the last clear operation or initialization.
 
         Return ``None`` when unavailable.
         """
@@ -170,7 +167,7 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         bytes per second played.
         """
         # See notes on `get_play_cursor` as well.
-        return self._raw_play_cursor_to_time(self.get_play_cursor())
+        return self._raw_play_cursor_to_time(self.get_play_cursor()) + self.player.last_seek_time
 
     def _raw_play_cursor_to_time(self, cursor):
         if cursor is None:

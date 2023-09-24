@@ -107,6 +107,7 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
         # happening).
         self._write_cursor = 0
         self._play_cursor = 0
+        self._last_flush_play_cursor = 0
 
         self._audio_data_in_use: Deque['AudioData'] = deque()
         self._pyglet_source_exhausted = False
@@ -142,6 +143,7 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
         self._flush_operation = None
 
         if op is FlushOperation.FLUSH:
+            self._last_flush_play_cursor = self._xa2_source_voice.samples_played
             # Before a flush, the voice is always stopped, so play if _playing is True.
             # Otherwise nothing has to be done
             if self._playing:
@@ -254,7 +256,7 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
                     # immediately continue playing the new buffer once it arrives
                     pass
 
-    def _refill(self) -> None:
+    def _refill(self, refill_size: int) -> None:
         """Get one piece of AudioData and submit it to the voice.
         This method will release the lock around the call to `get_audio_data`,
         so make sure it's held upon calling.
@@ -262,7 +264,7 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
         assert _debug(f"XAudio2: Retrieving new buffer")
 
         self._lock.release()
-        audio_data = self._get_and_compensate_audio_data(self._ideal_buffer_size, None)
+        audio_data = self._get_and_compensate_audio_data(refill_size, self._play_cursor)
         self._lock.acquire()
 
         if audio_data is None:
@@ -280,21 +282,39 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
         self.append_events(self._write_cursor, audio_data.events)
         self._write_cursor += audio_data.length
 
+    def _update_play_cursor(self) -> None:
+        self._play_cursor = (
+            (self._xa2_source_voice.samples_played - self._last_flush_play_cursor) *
+            self.source.audio_format.bytes_per_frame
+        )
+
+    def get_play_cursor(self) -> int:
+        return self._play_cursor
+
     def work(self) -> None:
         with self._lock:
-            # TODO: Get playback time and dispatch events?
             if self._flush_operation is not None:
                 return
 
-            while self._needs_refill():
-                self._refill()
+            self._update_play_cursor()
+            self.dispatch_media_events(self._play_cursor)
+            self._maybe_refill()
 
-    def _needs_refill(self) -> bool:
-        return (not self._pyglet_source_exhausted and
-                len(self._audio_data_in_use) < self._ideal_queued_buffer_count)
+    def _maybe_refill(self) -> bool:
+        if self._pyglet_source_exhausted:
+            return False
+
+        remaining_bytes = self._write_cursor - self._play_cursor
+        if remaining_bytes >= self._buffered_data_comfortable_limit:
+            return False
+
+        missing_bytes = self._singlebuffer_ideal_size - remaining_bytes
+        self._refill(self.source.audio_format.align_ceil(missing_bytes))
+        return True
 
     def prefill_audio(self) -> None:
-        self.work()
+        with self._lock:
+            self._maybe_refill()
 
     def set_volume(self, volume: float) -> None:
         self._xa2_source_voice.volume = volume

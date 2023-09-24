@@ -158,6 +158,7 @@ class PulseAudioPlayer(AbstractAudioPlayer):
         assert audio_format
 
         self._latest_timing_info = None
+        self._last_clear_read_index = 0
 
         self._pyglet_source_exhausted = False
         self._pending_bytes = 0
@@ -295,6 +296,10 @@ class PulseAudioPlayer(AbstractAudioPlayer):
             self._audio_data_buffer.clear()
 
         with self.stream.mainloop.lock:
+            # Just hope that the read index is frozen while we're paused.
+            ti = self._update_and_get_timing_info()
+            assert not ti.read_index_corrupt
+            self._last_clear_read_index = ti.read_index
             self.stream.prebuf().wait().delete()
 
     def play(self) -> None:
@@ -322,6 +327,9 @@ class PulseAudioPlayer(AbstractAudioPlayer):
             self.stream.update_timing_info().wait().delete()
             return self.stream.get_timing_info()
 
+    def get_play_cursor(self):
+        return self._get_read_index()
+
     def _get_read_index(self) -> Optional[int]:
         if (t_info := self._latest_timing_info) is None:
             return None
@@ -329,9 +337,10 @@ class PulseAudioPlayer(AbstractAudioPlayer):
         bps = self.source.audio_format.bytes_per_second
 
         time = round(
-            t_info.read_index +
-            (t_info.transport_usec / 100000.0) * bps -
-            (t_info.sink_usec / 100000.0) * bps
+            t_info.read_index -
+            self._last_clear_read_index +
+            (t_info.transport_usec / 1000000.0) * bps -
+            (t_info.sink_usec / 1000000.0) * bps
         )
 
         assert _debug('get_time ->', time)
