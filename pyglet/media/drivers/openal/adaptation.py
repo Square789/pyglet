@@ -204,7 +204,7 @@ class OpenALAudioPlayer(AbstractAudioPlayer):
         self._refill(self.source.audio_format.align_ceil(missing_bytes))
         return True
 
-    def get_play_cursor(self):
+    def get_play_cursor(self) -> int:
         return self._play_cursor
 
     def _refill(self, refill_size) -> None:

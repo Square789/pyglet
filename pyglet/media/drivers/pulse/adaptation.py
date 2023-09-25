@@ -324,29 +324,20 @@ class PulseAudioPlayer(AbstractAudioPlayer):
 
         self._playing = False
 
-    def _update_and_get_timing_info(self) -> Optional[pa.pa_timing_info]:
-        with self.stream.mainloop.lock:
-            self.stream.update_timing_info().wait().delete()
-            return self.stream.get_timing_info()
-
-    def get_play_cursor(self):
+    def get_play_cursor(self) -> int:
         return self._get_read_index()
 
-    def _get_read_index(self) -> Optional[int]:
+    def _get_read_index(self) -> int:
         if (t_info := self._latest_timing_info) is None:
-            return None
+            return 0
 
-        bps = self.source.audio_format.bytes_per_second
+        read_idx = t_info.read_index - self._last_clear_read_index
+        # bps = self.source.audio_format.bytes_per_second
+        # (t_info.transport_usec / 1000000.0) * bps -
+        # (t_info.sink_usec / 1000000.0) * bps
 
-        time = round(
-            t_info.read_index -
-            self._last_clear_read_index +
-            (t_info.transport_usec / 1000000.0) * bps -
-            (t_info.sink_usec / 1000000.0) * bps
-        )
-
-        assert _debug('get_time ->', time)
-        return time
+        assert _debug('_get_read_index ->', read_idx)
+        return read_idx
 
     def set_volume(self, volume: float) -> None:
         self._volume = volume

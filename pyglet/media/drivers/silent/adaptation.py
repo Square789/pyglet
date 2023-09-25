@@ -20,7 +20,7 @@ class SilentAudioPlayer(AbstractAudioPlayer):
         pass
 
     def get_play_cursor(self):
-        return None
+        return 0
 
     def set_volume(self, volume):
         pass

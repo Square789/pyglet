@@ -154,7 +154,7 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         """Get this player's play cursor/read index/byte offset from
         the last clear operation or initialization.
 
-        Return ``None`` when unavailable.
+        ``0`` is an acceptable return value when unavailable or unknown.
         """
         # This method should not/does not need to ask the audio backend for the
         # most recent play cursor position.
