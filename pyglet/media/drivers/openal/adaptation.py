@@ -34,6 +34,10 @@ class OpenALDriver(AbstractAudioDriver):
         return OpenALAudioPlayer(self, source, player)
 
     def delete(self) -> None:
+        if self.context is None:
+            assert _debug("Duplicate OpenALDriver.delete(), ignoring")
+            return
+
         assert _debug("Delete OpenALDriver")
         self.worker.stop()
 
@@ -45,6 +49,7 @@ class OpenALDriver(AbstractAudioDriver):
         self.device.buffer_pool.delete()
         self.context.delete()
         self.device.close()
+        self.context = None
 
     def have_version(self, major: int, minor: int) -> bool:
         return (major, minor) <= self.get_version()
