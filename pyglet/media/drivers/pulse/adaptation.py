@@ -168,6 +168,8 @@ class PulseAudioPlayer(AbstractAudioPlayer):
         # A lock that should be held whenever the audio data buffer is accessed, as well as
         # when stuff involving _pyglet_source_exhausted and _pending_bytes runs.
         # Should prevent The PA callback from interfering with the work method.
+        # Don't ever acquire the PA mainloop lock when this is held, might risk a deadlock
+        # if a callback runs at an unfortunate time.
         self._audio_data_lock = threading.Lock()
 
         self._clear_write = False
@@ -181,13 +183,6 @@ class PulseAudioPlayer(AbstractAudioPlayer):
             assert self.stream.is_ready
 
         assert _debug('PulseAudioPlayer: __init__ finished')
-
-    def _maybe_write_pending(self) -> None:
-        with self._audio_data_lock:
-            if self._pending_bytes > 0 and self._audio_data_buffer.available > 0:
-                with self.stream.mainloop.lock:
-                    written = self._write_to_stream(self._pending_bytes)
-                self._pending_bytes -= written
 
     def _write_callback(self, _stream, nbytes: int, _userdata) -> None:
         # Called from within PA thread
@@ -231,13 +226,12 @@ class PulseAudioPlayer(AbstractAudioPlayer):
         assert _debug(f"PulseAudioPlayer: Getting {refill_size}B of audio data")
         new_data = self._get_and_compensate_audio_data(refill_size, self._get_read_index())
 
-        self._audio_data_lock.acquire()
-        if new_data is None:
-            self._pyglet_source_exhausted = True
-        else:
-            self._audio_data_buffer.add_data(new_data)
-            self.append_events(self._audio_data_buffer.virtual_write_index, new_data.events)
-        self._audio_data_lock.release()
+        with self._audio_data_lock:
+            if new_data is None:
+                self._pyglet_source_exhausted = True
+            else:
+                self._audio_data_buffer.add_data(new_data)
+                self.append_events(self._audio_data_buffer.virtual_write_index, new_data.events)
 
     def _write_to_stream(self, nbytes: int) -> int:
         data_ptr, bytes_accepted = self.stream.begin_write(nbytes)
@@ -254,17 +248,25 @@ class PulseAudioPlayer(AbstractAudioPlayer):
 
         return bytes_written
 
-    def update_play_cursor(self) -> None:
-        with self.driver.mainloop.lock:
-            self.stream.update_timing_info().wait().delete()
-            self._latest_timing_info = self.stream.get_timing_info()
+    def _update_and_get_timing_info(self) -> Optional[pa.pa_timing_info]:
+        self.stream.update_timing_info().wait().delete()
+        return self.stream.get_timing_info()
+
+    def _maybe_write_pending(self) -> None:
+        with self._audio_data_lock:
+            if self._pending_bytes > 0 and self._audio_data_buffer.available > 0:
+                written = self._write_to_stream(self._pending_bytes)
+                self._pending_bytes -= written
 
     def work(self) -> None:
-        self._maybe_write_pending()
-        self.update_play_cursor()
+        with self.driver.mainloop.lock:
+            self._maybe_write_pending()
+            self._latest_timing_info = self._update_and_get_timing_info()
+
         self.dispatch_media_events(self._get_read_index())
         self._maybe_fill_audio_data_buffer()
-        self._maybe_write_pending()
+        with self.driver.mainloop.lock:
+            self._maybe_write_pending()
 
     def delete(self) -> None:
         assert _debug('PulseAudioPlayer.delete')
