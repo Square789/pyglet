@@ -108,12 +108,12 @@ class PulseAudioMainloop:
         result = pa.pa_threaded_mainloop_start(self._pa_threaded_mainloop)
         if result < 0:
             raise PulseAudioException(0, "Failed to start PulseAudio mainloop")
-        assert _debug('PulseAudioMainLoop: Started')
+        assert _debug('PulseAudioMainloop: Started')
 
     def delete(self) -> None:
         """Clean up the mainloop."""
         if self._pa_threaded_mainloop is not None:
-            assert _debug("Delete PulseAudioMainLoop")
+            assert _debug("Delete PulseAudioMainloop")
             pa.pa_threaded_mainloop_stop(self._pa_threaded_mainloop)
             pa.pa_threaded_mainloop_free(self._pa_threaded_mainloop)
             self._pa_threaded_mainloop = None
@@ -417,9 +417,8 @@ class PulseAudioStream(PulseAudioMainloopChild):
             context.check(
                 pa.pa_stream_disconnect(self._pa_stream)
             )
-            # Waiting is likely unnecessary.
-            # while not (self.is_terminated or self.is_failed):
-            #     self.mainloop.wait()
+            while not (self.is_terminated or self.is_failed):
+                self.mainloop.wait()
 
         self._disconnect_callbacks()
         pa.pa_stream_unref(self._pa_stream)
