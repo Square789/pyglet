@@ -55,6 +55,10 @@ class DirectSoundDriver(AbstractAudioDriver):
         return self._listener
 
     def delete(self):
+        if self._ds_listener is None:
+            assert _debug("DirectSoundDriver.delete() on deleted driver, ignoring")
+            return
+
         assert _debug("Deleting DirectSoundDriver")
         self.worker.stop()
         # Destroy listener before destroying driver
@@ -175,6 +179,9 @@ class DirectSoundAudioPlayer(AbstractAudioPlayer):
         self._eos_cursor = None
         self._possible_eos_cursor = 0
         self._has_underrun = False
+
+    def get_play_cursor(self):
+        return self._play_cursor
 
     def work(self):
         assert self._playing
