@@ -9,6 +9,11 @@ from pyglet.media.drivers.base import MediaEvent
 from pyglet.media.codecs.base import *
 
 
+
+def _bytes_from_audiodata(audio_data):
+    return memoryview(audio_data.data).tobytes()
+
+
 class AudioFormatTestCase(unittest.TestCase):
     def test_equality_true(self):
         af1 = AudioFormat(2, 8, 44100)
@@ -36,6 +41,20 @@ class AudioFormatTestCase(unittest.TestCase):
         self.assertEqual(af2.bytes_per_frame, 4)
         self.assertEqual(af2.bytes_per_second, 176400)
 
+    def test_alignment(self):
+        af = AudioFormat(2, 16, 44100)
+
+        self.assertEqual(af.align(2049), 2048)
+        self.assertEqual(af.align(2048), 2048)
+        self.assertEqual(af.align(2047), 2044)
+        self.assertEqual(af.align(0), 0)
+        self.assertEqual(af.align(-1), -4)
+        self.assertEqual(af.align_ceil(2049), 2052)
+        self.assertEqual(af.align_ceil(2048), 2048)
+        self.assertEqual(af.align_ceil(2047), 2048)
+        self.assertEqual(af.align_ceil(0), 0)
+        self.assertEqual(af.align_ceil(-1), 0)
+
     def test_repr(self):
         af1 = AudioFormat(1, 8, 22050)
         self.assertEqual(repr(af1), 'AudioFormat(channels=1, sample_size=8, sample_rate=22050)')
@@ -51,92 +70,26 @@ class AudioDataTestCase(unittest.TestCase):
     def create_string_buffer(self, data):
         return ctypes.create_string_buffer(data)
 
-    def test_consume_part_of_data(self):
-        audio_format = AudioFormat(1, 8, 11025)
-        duration = 1.0
-        length = int(duration * audio_format.bytes_per_second)
-        data = self.generate_random_string_data(length)
+    def test_pointer_bytes(self):
+        source_bytes = self.generate_random_string_data(2048)
+        assert len(source_bytes) == 2048
 
-        audio_data = AudioData(data, length, 0.0, duration, (MediaEvent(0.0, 'event'),))
+        audio_data = AudioData(source_bytes, 2048)
 
-        chunk_duration = 0.1
-        chunk_size = int(chunk_duration * audio_format.bytes_per_second)
-        self.assertLessEqual(chunk_size, length)
+        self.assertIsInstance(audio_data.pointer, int)
+        self.assertGreater(audio_data.pointer, 0)
 
-        audio_data.consume(chunk_size, audio_format)
+        retrieved_bytes = ctypes.string_at(audio_data.pointer, audio_data.length)
+        self.assertEqual(retrieved_bytes, source_bytes)
 
-        self.assertEqual(audio_data.length, length - chunk_size)
-        self.assertAlmostEqual(audio_data.duration, duration - chunk_duration, places=2)
-        self.assertAlmostEqual(audio_data.timestamp, chunk_duration, places=2)
+    def test_buffer_protocol(self):
+        d0 = AudioData(b"01234567", 8)
+        d1 = AudioData((ctypes.c_char * 24)(), 24)
+        d2 = AudioData(bytearray(64), 64)
 
-        self.assertEqual(audio_data.get_string_data(), data[chunk_size:])
-
-        self.assertTupleEqual(audio_data.events, ())
-
-    def test_consume_too_much_data(self):
-        audio_format = AudioFormat(1, 8, 11025)
-        duration = 1.0
-        length = int(duration * audio_format.bytes_per_second)
-        data = self.generate_random_string_data(length)
-
-        audio_data = AudioData(data, length, 0.0, duration, (MediaEvent(0.0, 'event'),))
-
-        chunk_duration = 1.1
-        chunk_size = int(chunk_duration * audio_format.bytes_per_second)
-        self.assertGreater(chunk_size, length)
-
-        audio_data.consume(chunk_size, audio_format)
-
-        self.assertEqual(audio_data.length, 0)
-        self.assertAlmostEqual(audio_data.duration, 0.0, places=2)
-        self.assertAlmostEqual(audio_data.timestamp, duration, places=2)
-
-        self.assertEqual(audio_data.get_string_data(), b'')
-
-        self.assertTupleEqual(audio_data.events, ())
-
-    def test_consume_non_str_data(self):
-        audio_format = AudioFormat(1, 8, 11025)
-        duration = 1.0
-        length = int(duration * audio_format.bytes_per_second)
-        data = self.generate_random_string_data(length)
-        non_str_data = self.create_string_buffer(data)
-
-        audio_data = AudioData(non_str_data, length, 0.0, duration, (MediaEvent(0.0, 'event'),))
-
-        chunk_duration = 0.1
-        chunk_size = int(chunk_duration * audio_format.bytes_per_second)
-        self.assertLessEqual(chunk_size, length)
-
-        audio_data.consume(chunk_size, audio_format)
-
-        self.assertEqual(audio_data.length, length - chunk_size)
-        self.assertAlmostEqual(audio_data.duration, duration - chunk_duration, places=2)
-        self.assertAlmostEqual(audio_data.timestamp, chunk_duration, places=2)
-
-        self.assertEqual(audio_data.get_string_data(), data[chunk_size:])
-
-        self.assertTupleEqual(audio_data.events, ())
-
-    def test_consume_only_events(self):
-        audio_format = AudioFormat(1, 8, 11025)
-        duration = 1.0
-        length = int(duration * audio_format.bytes_per_second)
-        data = self.generate_random_string_data(length)
-
-        audio_data = AudioData(data, length, 0.0, duration, (MediaEvent(0.0, 'event'),))
-
-        chunk_size = 0
-
-        audio_data.consume(chunk_size, audio_format)
-
-        self.assertEqual(audio_data.length, length)
-        self.assertAlmostEqual(audio_data.duration, duration, places=2)
-        self.assertAlmostEqual(audio_data.timestamp, 0., places=2)
-
-        self.assertEqual(audio_data.get_string_data(), data)
-
-        self.assertTupleEqual(audio_data.events, ())
+        self.assertEqual(_bytes_from_audiodata(d0), b"01234567")
+        self.assertEqual(_bytes_from_audiodata(d1), b"\x00" * 24)
+        self.assertEqual(_bytes_from_audiodata(d2), b"\x00" * 64)
 
 
 class SourceTestCase(unittest.TestCase):
@@ -247,7 +200,7 @@ class StaticSourceTestCase(unittest.TestCase):
 
         # Try to read all data plus more, more should be ignored
         returned_audio_data = static_source.get_queue_source().get_audio_data(len(self.mock_audio_data) + 1024)
-        self.assertEqual(returned_audio_data.get_string_data(), self.mock_audio_data, 'All data from the mock should be returned')
+        self.assertEqual(_bytes_from_audiodata(returned_audio_data), self.mock_audio_data, 'All data from the mock should be returned')
         self.assertAlmostEqual(returned_audio_data.duration, 5.0)
 
     def test_video_not_supported(self):
@@ -266,7 +219,7 @@ class StaticSourceTestCase(unittest.TestCase):
         returned_audio_data = queue_source.get_audio_data(len(self.mock_audio_data))
         self.assertAlmostEqual(returned_audio_data.duration, 4.0)
         self.assertEqual(returned_audio_data.length, len(self.mock_audio_data)-11025)
-        self.assertEqual(returned_audio_data.get_string_data(), self.mock_audio_data[11025:], 'Should have seeked past 1 second')
+        self.assertEqual(_bytes_from_audiodata(returned_audio_data), self.mock_audio_data[11025:], 'Should have seeked past 1 second')
 
     def test_multiple_queued(self):
         self.create_valid_mock_source()
@@ -286,7 +239,7 @@ class StaticSourceTestCase(unittest.TestCase):
         returned_audio_data = queue_source1.get_audio_data(len(self.mock_audio_data))
         self.assertAlmostEqual(returned_audio_data.duration, 4.0)
         self.assertEqual(returned_audio_data.length, len(self.mock_audio_data)-11025)
-        self.assertEqual(returned_audio_data.get_string_data(), self.mock_audio_data[11025:], 'Should have seeked past 1 second')
+        self.assertEqual(_bytes_from_audiodata(returned_audio_data), self.mock_audio_data[11025:], 'Should have seeked past 1 second')
 
     def test_seek_aligned_to_sample_size_2_bytes(self):
         self.create_valid_mock_source(bitrate=16, channels=1)
