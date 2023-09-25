@@ -219,7 +219,7 @@ class OpenALAudioPlayer(AbstractAudioPlayer):
 
         # Get, fill and queue OpenAL buffer using the entire AudioData
         buf = self.alsource.get_buffer()
-        buf.data(audio_data.pointer, self.source.audio_format, audio_data.length)
+        buf.data(audio_data, self.source.audio_format)
         self.alsource.queue_buffer(buf)
 
         # Adjust the write cursor and memorize buffer length
