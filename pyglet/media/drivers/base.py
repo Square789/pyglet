@@ -277,7 +277,7 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         desync_bytes, extreme_desync = self.get_audio_time_diff(audio_time)
 
         if desync_bytes == 0:
-            return self.source.get_audio_data(requested_size, 0.0)
+            return self.source.get_audio_data(requested_size)
 
         compensated_bytes = 0
         afmt = self.source.audio_format
@@ -296,7 +296,7 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
                 afmt.timestamp_to_bytes_aligned(0.012),
             )
 
-            audio_data = self.source.get_audio_data(requested_size - compensated_bytes, 0.0)
+            audio_data = self.source.get_audio_data(requested_size - compensated_bytes)
             if audio_data is not None:
                 if audio_data.length < afmt.bytes_per_frame:
                     raise RuntimeError("Partial audio frame returned?")
@@ -318,7 +318,7 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
                                  if extreme_desync
                                  else min(-desync_bytes, afmt.timestamp_to_bytes_aligned(0.012)))
 
-            audio_data = self.source.get_audio_data(requested_size + compensated_bytes, 0.0)
+            audio_data = self.source.get_audio_data(requested_size + compensated_bytes)
             if audio_data is not None:
                 if audio_data.length <= compensated_bytes:
                     compensated_bytes = -audio_data.length

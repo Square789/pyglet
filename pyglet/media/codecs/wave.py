@@ -43,7 +43,7 @@ class WaveSource(StreamingSource):
     def is_precise(self):
         return True
 
-    def get_audio_data(self, num_bytes, compensation_time=0.0):
+    def get_audio_data(self, num_bytes):
         num_frames = max(1, num_bytes // self._bytes_per_frame)
 
         data = self._wave.readframes(num_frames)

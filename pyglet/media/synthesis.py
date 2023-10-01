@@ -226,7 +226,7 @@ class SynthesisSource(Source):
     def is_precise(self):
         return True
 
-    def get_audio_data(self, num_bytes, compensation_time=0.0):
+    def get_audio_data(self, num_bytes):
         """Return at most `num_bytes` bytes of audio data."""
         num_bytes = min(num_bytes, self._max_offset - self._offset)
         samples = num_bytes // 2

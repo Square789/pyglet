@@ -419,15 +419,13 @@ class Source:
         r.acquire()
         return r
 
-    def get_audio_data(self, num_bytes: int, compensation_time: float = 0.0) -> Optional[AudioData]:
+    def get_audio_data(self, num_bytes: int) -> Optional[AudioData]:
         """Get next packet of audio data.
 
         Args:
             num_bytes (int): The requested amount of bytes, returned
                 amount may be lower or higher. See the docstring of
                 :meth:`is_precise` for additional information.
-            compensation_time (float): Time in sec to compensate due to a
-                difference between the master clock and the audio clock.
 
         Returns:
             :class:`.AudioData`: Next packet of audio data, or ``None`` if
@@ -464,7 +462,7 @@ class DeadSource(Source):
     def seek(self, timestamp: float) -> None:
         pass
 
-    def get_audio_data(self, _nb: int, _ct: float = 0.0) -> Optional[AudioData]:
+    def get_audio_data(self, _nb: int) -> Optional[AudioData]:
         return None
 
 
@@ -525,7 +523,7 @@ class StaticSource(Source):
     def release(self) -> None:
         raise RuntimeError('StaticSource cannot be released')
 
-    def get_audio_data(self, num_bytes: int, compensation_time: float = 0.0) -> Optional[AudioData]:
+    def get_audio_data(self, num_bytes: int) -> Optional[AudioData]:
         """The StaticSource does not provide audio data.
 
         When the StaticSource is queued on a
@@ -577,12 +575,11 @@ class StaticMemorySource(Source):
         # Align to frame to not return partial ones and corrupt audio data
         self._file.seek(self.audio_format.align(offset))
 
-    def get_audio_data(self, num_bytes: int, compensation_time: float = 0.0) -> Optional[AudioData]:
+    def get_audio_data(self, num_bytes: int) -> Optional[AudioData]:
         """Get next packet of audio data.
 
         Args:
             num_bytes (int): Maximum number of bytes of data to return.
-            compensation_time (float): Not used in this class.
 
         Returns:
             :class:`.AudioData`: Next packet of audio data, or ``None`` if
@@ -646,7 +643,7 @@ class SourceGroup(Source):
 
         old_source.release()
 
-    def get_audio_data(self, num_bytes: int, compensation_time: float = 0.0) -> Optional[AudioData]:
+    def get_audio_data(self, num_bytes: int) -> Optional[AudioData]:
         """Get next audio packet.
 
         :Parameters:
@@ -720,7 +717,7 @@ class PreciseStreamingSource(StreamingSource):
         self._exhausted = False
         self._source.seek(timestamp)
 
-    def get_audio_data(self, num_bytes: int, _compensation_time: float = 0.0) -> Optional[AudioData]:
+    def get_audio_data(self, num_bytes: int) -> Optional[AudioData]:
         if self._exhausted:
             return None
 
