@@ -306,8 +306,7 @@ class Player(pyglet.event.EventDispatcher):
         duration of the source, it will be clamped to the end.
 
         Args:
-            timestamp (float): The time where to seek in the source, clamped to the
-                beginning and end of the source.
+            timestamp (float): The time where to seek in the source.
         """
         playing = self._playing
         if playing:
@@ -318,7 +317,12 @@ class Player(pyglet.event.EventDispatcher):
         if bl.logger is not None:
             bl.logger.log("p.P.sk", timestamp)
 
-        timestamp = max(timestamp, 0)
+        timestamp = max(timestamp, 0.0)
+        if self._source.duration is not None:
+            # TODO: If the duration is reported as None and the source clamps anyways,
+            # this will have pretty bad effects.
+            # Maybe have seek methods return the timestamp they actually seeked to
+            timestamp = min(timestamp, self._source.duration)
 
         self._timer.set_time(timestamp)
         self._source.seek(timestamp)
