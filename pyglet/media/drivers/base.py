@@ -253,19 +253,19 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
             avg_diff = self.source.audio_format.align(
                 self.audio_sync_cumul_measurements // self.AUDIO_SYNC_REQUIRED_MEASUREMENTS)
 
-            print(
-                f"{diff_bytes:>6}, {avg_diff:>6} | "
-                f"{(diff_bytes / self.source.audio_format.bytes_per_second):>9.6f}, "
-                f"{(avg_diff / self.source.audio_format.bytes_per_second):>9.6f}"
-            )
+            # print(
+            #     f"{diff_bytes:>6}, {avg_diff:>6} | "
+            #     f"{(diff_bytes / self.source.audio_format.bytes_per_second):>9.6f}, "
+            #     f"{(avg_diff / self.source.audio_format.bytes_per_second):>9.6f}"
+            # )
             if abs(avg_diff) > self.audio_sync_minimal_difference:
                 return avg_diff, False
-        else:
-            if audio_time is not None:
-                print(
-                    f"{diff_bytes:>6}, | "
-                    f"{(diff_bytes / self.source.audio_format.bytes_per_second):>9.6f}, "
-                )
+        # else:
+        #     if audio_time is not None:
+        #         print(
+        #             f"{diff_bytes:>6}, | "
+        #             f"{(diff_bytes / self.source.audio_format.bytes_per_second):>9.6f}, "
+        #         )
 
         return 0, False
 
