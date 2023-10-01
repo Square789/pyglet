@@ -129,7 +129,6 @@ class PulseAudioMainloop:
     def unlock(self) -> None:
         """Unlock the mainloop thread."""
         assert self._pa_threaded_mainloop is not None
-        # TODO: This is not completely safe. Unlock might be called without lock.
         assert self._lock_count > 0
         self._lock_count -= 1
         pa.pa_threaded_mainloop_unlock(self._pa_threaded_mainloop)
@@ -146,7 +145,6 @@ class PulseAudioMainloop:
         assert self._lock_count > 0
         original_lock_count = self._lock_count
         while self._lock_count > 1:
-            assert _debug("WARN: Reentering lock on python side")
             self.unlock()
         pa.pa_threaded_mainloop_wait(self._pa_threaded_mainloop)
         while self._lock_count < original_lock_count:
@@ -676,7 +674,11 @@ class PulseAudioStream(PulseAudioMainloopChild):
 
 
 class PulseAudioOperation(PulseAudioMainloopChild):
-    """Asynchronous PulseAudio operation"""
+    """An asynchronous PulseAudio operation.
+    Can be waited for, where it will run until completion or cancellation.
+    Remember to `delete()` it with the mainloop lock held, otherwise
+    it will be leaked.
+    """
 
     _state_name = {pa.PA_OPERATION_RUNNING: 'Running',
                    pa.PA_OPERATION_DONE: 'Done',
@@ -694,21 +696,15 @@ class PulseAudioOperation(PulseAudioMainloopChild):
         self.callback_lump = callback_lump
         self._pa_operation = pa_operation
 
-    def __del__(self):
-        if self._pa_operation is not None:
-            assert _debug("PulseAudioOperation cleaned up via __del__")
-            self.delete()
-
     def _get_state(self) -> None:
         assert self._pa_operation is not None
         return pa.pa_operation_get_state(self._pa_operation)
 
     def delete(self) -> None:
-        """Unref and delete the operation. Will lock."""
+        """Unref and delete the operation."""
         if self._pa_operation is not None:
             assert _debug(f"PulseAudioOperation.delete({id(self):X})")
-            with self.mainloop.lock:
-                pa.pa_operation_unref(self._pa_operation)
+            pa.pa_operation_unref(self._pa_operation)
             self._pa_operation = None
             self.callback_lump = None
             self.context = None
