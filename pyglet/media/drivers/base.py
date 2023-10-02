@@ -282,7 +282,7 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         compensated_bytes = 0
         afmt = self.source.audio_format
 
-        print(f"desync, {desync_bytes=}, {extreme_desync=}")
+        assert _debug(f"Audio desync, {desync_bytes=}, {extreme_desync=}")
         assert desync_bytes % afmt.bytes_per_frame == 0
 
         if desync_bytes > 0:
