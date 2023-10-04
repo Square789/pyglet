@@ -209,7 +209,7 @@ class IXAudio2VoiceCallback(com.Interface):
 
 
 class XAudio2VoiceCallback(com.COMObject):
-    """Callback class used to trigger when buffers or streams end..
+    """Callback class used to trigger when buffers or streams end.
            WARNING: Whenever a callback is running, XAudio2 cannot generate audio.
            Make sure these functions run as fast as possible and do not block/delay more than a few milliseconds.
            MS Recommendation:
@@ -221,12 +221,12 @@ class XAudio2VoiceCallback(com.COMObject):
     """
     _interfaces_ = [IXAudio2VoiceCallback]
 
-    def __init__(self, player):
+    def __init__(self):
         super().__init__()
-        self.player = player
+        self.on_buffer_end = None
 
     def OnBufferEnd(self, pBufferContext):
-        self.player.on_buffer_end(pBufferContext)
+        self.on_buffer_end(pBufferContext)
 
     def OnVoiceError(self, pBufferContext, hresult):
         raise Exception(f"Error occurred during audio playback: {hresult}")
@@ -332,7 +332,7 @@ class IXAudio2SourceVoice(IXAudio2Voice):
         ('GetFrequencyRatio',
          com.STDMETHOD(POINTER(c_float))),
         ('SetSourceSampleRate',
-         com.STDMETHOD()),
+         com.STDMETHOD(UINT32)),
     ]
 
 

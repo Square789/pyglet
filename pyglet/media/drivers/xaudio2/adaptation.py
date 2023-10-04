@@ -92,8 +92,6 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
         # shuts down. The AudioDriver does not keep a ref to the AudioPlayer.
         self.driver = driver
 
-        self._flush_operation = None
-
         # Need to cache these because pyglet API allows update separately, but
         # XAudio2 requires both to be set at once.
         self._cone_inner_angle = 360
@@ -108,7 +106,6 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
         # happening).
         self._write_cursor = 0
         self._play_cursor = 0
-        self._last_flush_play_cursor = 0
 
         self._audio_data_in_use: Deque['AudioData'] = deque()
         self._pyglet_source_exhausted = False
@@ -125,7 +122,7 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
         self._xa2_source_voice = None
 
     def on_driver_reset(self) -> None:
-        self._xa2_source_voice = self.driver._xa2_driver.get_source_voice(self.source, self)
+        self._xa2_source_voice = self.driver._xa2_driver.get_source_voice(self.source.audio_format, self)
 
         # Queue up any buffers that are still in queue but weren't deleted. This does not
         # pickup where the last sample played, only where the last buffer was submitted.
@@ -136,70 +133,33 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
             xa2_buffer = interface.create_xa2_buffer(audio_data)
             self._xa2_source_voice.submit_buffer(xa2_buffer)
 
-    def _on_flush_complete(self) -> None:
-        # Remember to hold the lock when calling this
-        assert not self._audio_data_in_use
-
-        op = self._flush_operation
-        self._flush_operation = None
-
-        if op is FlushOperation.FLUSH:
-            self._last_flush_play_cursor = self._xa2_source_voice.samples_played
-            # Before a flush, the voice is always stopped, so play if _playing is True.
-            # Otherwise nothing has to be done
-            if self._playing:
-                self._xa2_source_voice.play()
-                self.driver.worker.add(self)
-
-        elif op is FlushOperation.FLUSH_THEN_DELETE:
-            self._delete_now()
-
-    def _flush(self, operation: FlushOperation) -> None:
-        # Remember to hold the lock when calling this
-        assert _debug(f"XAudio2 _flush: {operation=}")
-
-        if self._flush_operation is None:
-            self.stop()
-            self._flush_operation = operation
-            self._xa2_source_voice.flush()
-            if self._xa2_source_voice.buffers_queued == 0:
-                self._on_flush_complete()
-        else:
-            self._flush_operation = max(self._flush_operation, operation)
-
-        assert _debug("return XAudio2 _flush")
-
-    def _delete_now(self) -> None:
-        assert _debug("XAudio2: Player deleted, returning voice")
-        self.driver._xa2_driver.return_voice(self._xa2_source_voice)
-        self.driver = None
-        self._xa2_source_voice = None
-        self._audio_data_in_use.clear()
-
     def delete(self) -> None:
-        assert _debug("Xaudio2 delete")
         if self.driver._xa2_driver is None:
+            assert _debug("Xaudio2: Player deleted, driver is gone")
             # Driver was deleted, voice is gone; just break up some references and return
             self.driver = None
             self._xa2_source_voice = None
             self._audio_data_in_use.clear()
             return
 
+        assert _debug("XAudio2: Player deleted, returning voice")
         self.driver.worker.remove(self)
         with self._lock:
-            self._flush(FlushOperation.FLUSH_THEN_DELETE)
+            self.stop()
+            self.driver._xa2_driver.return_voice(self._xa2_source_voice, self._audio_data_in_use)
+            self.driver = None
+            self._xa2_source_voice = None
 
     def play(self) -> None:
         self._lock.acquire()
-        assert _debug(f'XAudio2 play: {self._playing=}, {self._flush_operation=}')
+        assert _debug(f'XAudio2 play: {self._playing=}')
 
         if not self._playing:
             self._playing = True
-            if self._flush_operation is None:
-                self._xa2_source_voice.play()
-                self._lock.release()
-                self.driver.worker.add(self)
-                return
+            self._xa2_source_voice.play()
+            self._lock.release()
+            self.driver.worker.add(self)
+            return
 
         self._lock.release()
 
@@ -222,16 +182,20 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
             self._play_cursor = 0
             self._write_cursor = 0
             self._pyglet_source_exhausted = False
-            self._flush(FlushOperation.FLUSH)
+            self.driver._xa2_driver.return_voice(self._xa2_source_voice,
+                                                 self._audio_data_in_use)
+            self._audio_data_in_use = deque()
+        self._xa2_source_voice = self.driver._xa2_driver.get_source_voice(self.source.audio_format, self)
 
     def on_buffer_end(self, buffer_context_ptr: int) -> None:
         # Called from the XAudio2 thread.
-        # A buffer stopped being played by the voice.
-        # Assume it's the first one; although this may not exactly hold for the calls
-        # produced as consequence of `flush`.
+        # A buffer stopped being played by the voice, it should by all means be the first one
         with self._lock:
             assert self._audio_data_in_use
-            self._audio_data_in_use.popleft()
+            d = self._audio_data_in_use.popleft()
+            del d.data
+            del d.pointer # fuck off?
+            del d
             # This should cause the AudioData to lose all its references and be gc'd
 
             if self._audio_data_in_use:
@@ -240,29 +204,23 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
 
             assert self._xa2_source_voice.buffers_queued == 0
 
-            if self._flush_operation is not None:
-                assert _debug("Last buffer ended after flush")
-                # We were emptying buffers due to a flush;
-                # source is now truly empty and can be reused/returned
-                self._on_flush_complete()
+            # Last buffer ran out naturally, out of AudioData; voice will now fall silent
+            if self._pyglet_source_exhausted:
+                assert _debug("Last buffer ended normally, dispatching eos")
+                MediaEvent('on_eos').sync_dispatch_to_player(self.player)
             else:
-                # Last buffer ran out naturally, out of AudioData; voice will now fall silent
-                if self._pyglet_source_exhausted:
-                    assert _debug("Last buffer ended normally, dispatching eos")
-                    MediaEvent('on_eos').sync_dispatch_to_player(self.player)
-                else:
-                    assert _debug("Last buffer ended normally, source is lagging behind")
-                    # Shouldn't have ran out; supplier is running behind
-                    # All we can do is wait; as long as voices are not stopped via `Stop`, they will
-                    # immediately continue playing the new buffer once it arrives
-                    pass
+                assert _debug("Last buffer ended normally, source is lagging behind")
+                # Shouldn't have ran out; supplier is running behind
+                # All we can do is wait; as long as voices are not stopped via `Stop`, they will
+                # immediately continue playing the new buffer once it arrives
+                pass
 
     def _refill(self, refill_size: int) -> None:
         """Get one piece of AudioData and submit it to the voice.
         This method will release the lock around the call to `get_audio_data`,
         so make sure it's held upon calling.
         """
-        assert _debug(f"XAudio2: Retrieving new buffer")
+        assert _debug(f"XAudio2: Retrieving new buffer of {refill_size}B")
 
         self._lock.release()
         audio_data = self._get_and_compensate_audio_data(refill_size, self._play_cursor)
@@ -285,8 +243,7 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
 
     def _update_play_cursor(self) -> None:
         self._play_cursor = (
-            (self._xa2_source_voice.samples_played - self._last_flush_play_cursor) *
-            self.source.audio_format.bytes_per_frame
+            self._xa2_source_voice.samples_played * self.source.audio_format.bytes_per_frame
         )
 
     def get_play_cursor(self) -> int:
@@ -294,9 +251,6 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
 
     def work(self) -> None:
         with self._lock:
-            if self._flush_operation is not None:
-                return
-
             self._update_play_cursor()
             self.dispatch_media_events(self._play_cursor)
             self._maybe_refill()
