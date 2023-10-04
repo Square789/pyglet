@@ -1,7 +1,8 @@
 """High-level sound and video player."""
 
-import time
 from collections import deque
+import time
+from typing import Iterable, Optional, Union
 
 import pyglet
 from pyglet.gl import GL_TEXTURE_2D
@@ -19,33 +20,33 @@ class PlaybackTimer:
     paused and reset.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._elapsed = 0.0
         self._started_at = None
 
-    def start(self):
+    def start(self) -> None:
         """Start the timer."""
         self._started_at = time.perf_counter()
 
-    def pause(self):
+    def pause(self) -> None:
         """Pause the timer."""
         self._elapsed = self.get_time()
         self._started_at = None
 
-    def reset(self):
+    def reset(self) -> None:
         """Reset the timer to 0."""
         self._elapsed = 0.0
         if self._started_at is not None:
             self._started_at = time.perf_counter()
 
-    def get_time(self):
+    def get_time(self) -> float:
         """Get the elapsed time."""
         if self._started_at is None:
             return self._elapsed
 
         return time.perf_counter() - self._started_at + self._elapsed
 
-    def set_time(self, value):
+    def set_time(self, value: float) -> None:
         """
         Manually set the elapsed time.
 
@@ -102,7 +103,7 @@ class Player(pyglet.event.EventDispatcher):
     _cone_outer_angle = 360.
     _cone_outer_gain = 1.
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the Player with a MasterClock."""
         self._source = None
         self._playlists = deque()
@@ -123,11 +124,11 @@ class Player(pyglet.event.EventDispatcher):
         #: .. versionadded:: 1.4
         self.loop = False
 
-    def __del__(self):
+    def __del__(self) -> None:
         """Release the Player resources."""
         self.delete()
 
-    def queue(self, source):
+    def queue(self, source: Union[Source, Iterable[Source]]) -> None:
         """
         Queue the source on this player.
 
@@ -137,7 +138,7 @@ class Player(pyglet.event.EventDispatcher):
         Args:
             source (Source or Iterable[Source]): The source to queue.
         """
-        if isinstance(source, (Source, SourceGroup)):
+        if isinstance(source, Source):
             source = _one_item_playlist(source)
         else:
             try:
@@ -152,7 +153,7 @@ class Player(pyglet.event.EventDispatcher):
 
         self._set_playing(self._playing)
 
-    def _set_source(self, new_source) -> None:
+    def _set_source(self, new_source: Source) -> None:
         if self._source is not None:
             self._source.seek(0.0)
             self._source.release()
@@ -162,7 +163,7 @@ class Player(pyglet.event.EventDispatcher):
         else:
             self._source = new_source.get_queue_source()
 
-    def _set_playing(self, playing):
+    def _set_playing(self, playing: bool) -> None:
         # stopping = self._playing and not playing
         # starting = not self._playing and playing
 
@@ -206,7 +207,7 @@ class Player(pyglet.event.EventDispatcher):
             self._timer.pause()
 
     @property
-    def playing(self):
+    def playing(self) -> bool:
         """
         bool: Read-only. Determine if the player state is playing.
 
@@ -218,21 +219,21 @@ class Player(pyglet.event.EventDispatcher):
         """
         return self._playing
 
-    def play(self):
+    def play(self) -> None:
         """Begin playing the current source.
 
         This has no effect if the player is already playing.
         """
         self._set_playing(True)
 
-    def pause(self):
+    def pause(self) -> None:
         """Pause playback of the current source.
 
         This has no effect if the player is already paused.
         """
         self._set_playing(False)
 
-    def delete(self):
+    def delete(self) -> None:
         """Release the resources acquired by this player.
 
         The internal audio player and the texture will be deleted.
@@ -244,7 +245,7 @@ class Player(pyglet.event.EventDispatcher):
         if self._texture:
             self._texture = None
 
-    def next_source(self):
+    def next_source(self) -> None:
         """Move immediately to the next source in the current playlist.
 
         If the playlist is empty, discard it and check if another playlist
@@ -299,7 +300,7 @@ class Player(pyglet.event.EventDispatcher):
             self._set_playing(was_playing)
             self.dispatch_event('on_player_next_source')
 
-    def seek(self, timestamp):
+    def seek(self, timestamp: float) -> None:
         """
         Seek for playback to the indicated timestamp on the current source.
 
@@ -338,7 +339,7 @@ class Player(pyglet.event.EventDispatcher):
             pyglet.clock.unschedule(self.update_texture)
         self._set_playing(playing)
 
-    def _create_audio_player(self):
+    def _create_audio_player(self) -> None:
         assert not self._audio_player
         assert self.source
 
@@ -358,12 +359,12 @@ class Player(pyglet.event.EventDispatcher):
             setattr(self, attr, value)
 
     @property
-    def source(self):
+    def source(self) -> Optional[Source]:
         """Source: Read-only. The current :class:`Source`, or ``None``."""
         return self._source
 
     @property
-    def time(self):
+    def time(self) -> float:
         """
         float: Read-only. Current playback time of the current source.
 
@@ -374,7 +375,7 @@ class Player(pyglet.event.EventDispatcher):
         """
         return self._timer.get_time()
 
-    def _create_texture(self):
+    def _create_texture(self) -> None:
         video_format = self.source.video_format
         self._texture = pyglet.image.Texture.create(video_format.width, video_format.height, GL_TEXTURE_2D)
         self._texture = self._texture.get_transform(flip_y=True)
@@ -384,7 +385,7 @@ class Player(pyglet.event.EventDispatcher):
         return self._texture
 
     @property
-    def texture(self):
+    def texture(self) -> pyglet.image.Texture:
         """
         :class:`pyglet.image.Texture`: Get the texture for the current video frame.
 
@@ -394,7 +395,7 @@ class Player(pyglet.event.EventDispatcher):
         """
         return self._texture
 
-    def get_texture(self):
+    def get_texture(self) -> pyglet.image.Texture:
         """
         Get the texture for the current video frame.
 
@@ -410,17 +411,14 @@ class Player(pyglet.event.EventDispatcher):
         """
         return self.texture
 
-    def refill_buffer(self):
-        raise NotImplemented
-
-    def seek_next_frame(self):
+    def seek_next_frame(self) -> None:
         """Step forwards one video frame in the current source."""
         time = self.source.get_next_video_timestamp()
         if time is None:
             return
         self.seek(time)
 
-    def update_texture(self, dt=None):
+    def update_texture(self, dt: float = None) -> None:
         """Manually update the texture from the current source.
 
         This happens automatically, so you shouldn't need to call this method.
@@ -490,7 +488,7 @@ class Player(pyglet.event.EventDispatcher):
         pyglet.clock.schedule_once(self.update_texture, delay)
         # self.pr.enable()
 
-    def _video_finished(self, dt):
+    def _video_finished(self, _dt) -> None:
         if self._audio_player is None:
             self.dispatch_event("on_eos")
 
@@ -654,14 +652,15 @@ class PlayerGroup:
     All players in the group must currently not belong to any other group.
 
     Args:
-        players (List[Player]): List of :class:`.Player` s in this group.
+        players (Iterable[Player]): Iterable of :class:`.Player` s in this
+        group.
     """
 
-    def __init__(self, players):
+    def __init__(self, players: Iterable[Player]) -> None:
         """Initialize the PlayerGroup with the players."""
         self.players = list(players)
 
-    def play(self):
+    def play(self) -> None:
         """Begin playing all players in the group simultaneously."""
         audio_players = [p._audio_player
                          for p in self.players if p._audio_player]
@@ -670,7 +669,7 @@ class PlayerGroup:
         for player in self.players:
             player.play()
 
-    def pause(self):
+    def pause(self) -> None:
         """Pause all players in the group simultaneously."""
         audio_players = [p._audio_player
                          for p in self.players if p._audio_player]
