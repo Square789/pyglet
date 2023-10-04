@@ -69,20 +69,21 @@ class _PlayerProperty:
     """
 
     def __init__(self, attribute, doc=None):
-        self.attribute = attribute
+        self.private_name = '_' + attribute
+        self.setter_name = 'set_' + attribute
         self.__doc__ = doc or ''
 
     def __get__(self, obj, objtype=None):
         if obj is None:
             return self
-        if '_' + self.attribute in obj.__dict__:
-            return obj.__dict__['_' + self.attribute]
-        return getattr(objtype, '_' + self.attribute)
+        if self.private_name in obj.__dict__:
+            return obj.__dict__[self.private_name]
+        return getattr(objtype, self.private_name)
 
     def __set__(self, obj, value):
-        obj.__dict__['_' + self.attribute] = value
+        obj.__dict__[self.private_name] = value
         if obj._audio_player:
-            getattr(obj._audio_player, 'set_' + self.attribute)(value)
+            getattr(obj._audio_player, self.setter_name)(value)
 
 
 class Player(pyglet.event.EventDispatcher):
