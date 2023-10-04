@@ -637,7 +637,6 @@ class WMFSource(Source):
 
             # Convert to single buffer as a sample could potentially(rarely) have multiple buffers.
             imf_sample.ConvertToContiguousBuffer(ctypes.byref(imf_buffer))
-            imf_sample.Release()
 
             audio_data_ptr = POINTER(BYTE)()
             audio_data_length = DWORD()
@@ -648,6 +647,7 @@ class WMFSource(Source):
 
             imf_buffer.Unlock()
             imf_buffer.Release()
+            imf_sample.Release()
 
             return AudioData(audio_data,
                              audio_data_length.value,
