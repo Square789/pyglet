@@ -192,10 +192,7 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
         # A buffer stopped being played by the voice, it should by all means be the first one
         with self._lock:
             assert self._audio_data_in_use
-            d = self._audio_data_in_use.popleft()
-            del d.data
-            del d.pointer # fuck off?
-            del d
+            self._audio_data_in_use.popleft()
             # This should cause the AudioData to lose all its references and be gc'd
 
             if self._audio_data_in_use:
