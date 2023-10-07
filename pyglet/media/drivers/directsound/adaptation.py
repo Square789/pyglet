@@ -193,7 +193,7 @@ class DirectSoundAudioPlayer(AbstractAudioPlayer):
             self._maybe_fill()
             return
 
-        # Source exhausted, just check whether we hit the end
+        # Source exhausted, check whether we hit the end
         if not self._has_underrun and self._play_cursor > self._eos_cursor:
             self._has_underrun = True
             assert _debug("DirectSoundAudioPlayer: Dispatching eos")

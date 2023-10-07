@@ -174,6 +174,7 @@ class PulseAudioPlayer(AbstractAudioPlayer):
 
         self._clear_write = False
         self._playing = False
+        self._has_underrun = False
 
         with driver.mainloop.lock:
             self.stream = driver.context.create_stream(audio_format)
@@ -205,6 +206,7 @@ class PulseAudioPlayer(AbstractAudioPlayer):
         with self._audio_data_lock:
             if self._pyglet_source_exhausted and self._audio_data_buffer.available == 0:
                 MediaEvent('on_eos').sync_dispatch_to_player(self.player)
+            self._has_underrun = True
         self.stream.mainloop.signal()
 
     def _maybe_fill_audio_data_buffer(self) -> None:
@@ -229,6 +231,8 @@ class PulseAudioPlayer(AbstractAudioPlayer):
         with self._audio_data_lock:
             if new_data is None:
                 self._pyglet_source_exhausted = True
+                if self._has_underrun:
+                    MediaEvent('on_eos').sync_dispatch_to_player(self.player)
             else:
                 self._audio_data_buffer.add_data(new_data)
                 self.append_events(self._audio_data_buffer.virtual_write_index, new_data.events)
@@ -296,6 +300,7 @@ class PulseAudioPlayer(AbstractAudioPlayer):
             # asap.
             self._pyglet_source_exhausted = False
             self._audio_data_buffer.clear()
+            self._has_underrun = False
 
         with self.stream.mainloop.lock:
             # Just hope that the read index is frozen while we're paused.

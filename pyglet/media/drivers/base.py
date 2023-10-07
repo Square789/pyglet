@@ -90,11 +90,51 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         """Ran regularly by the worker thread. This method should fill up
         the player's buffers if required, and dispatch any necessary events.
         """
+        # The general flow for a work method should be something like:
+        # update_play_cursor()
+        # dispatch_media_events()
+        # if not source_exhausted:
+        #   if play_cursor_too_close_to_write_cursor():
+        #     get_and_submit_new_audio_data()
+        #     if not source_exhausted:
+        #       return
+        #     else:
+        #       update_play_cursor()
+        #   else:
+        #     return
+        # if play_cursor > write_cursor:
+        #   dispatch_on_eos()
+        #
+        # Player backends might report an underflow via a callback.
+        # In that case, it should look something like this, but beware to protect
+        # appropiate sections with a lock, otherwise you are probably opening yourself
+        # up to really unlucky issues where the callback and work method may leave some
+        # variables in inconclusive states.
+        # update_play_cursor()
+        # dispatch_media_events()
+        # if not source_exhausted: # R1OzDXYFarg
+        #   if play_cursor_too_close_to_write_cursor():
+        #     get_and_submit_new_audio_data()
+        #     if _has_underrun:
+        #	    if source_exhausted:
+        #         dispatch_eon_eos()
+        #       else:
+        #         restart_player()
+        #       _has_underrun = False
+        #
+        # on_underrun:
+        #   if source_exhausted:
+        #     dispatch_on_eos()
+        #   else:
+        #     _has_underrun = True
+        #
+        #
         # Implementing this method in tandem with the others safely is prone to pitfalls,
         # so here's some hints:
         # It may get called from the worker thread. While that happens, the worker thread
         # will hold its operation lock.
-        # These things may happen to the player while `work` is being called:
+        # These things could theoretically happen to the player while `work` is being
+        # called:
         #
         # It may get paused/unpaused.
         # - Receiving data after getting paused/unpaused is typically not a problem.
@@ -113,7 +153,7 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         #
         # NOTE: In order for these calls to be more reliable, `remove` should be the first
         # statement in such implementations and `add` the last one, to ensure that `work`
-        # will not be run/not start after/before player attributes have been changed.
+        # will not be run after/not start before player attributes have been changed.
         #
         # This method may also be called from the main thread through `prefill_audio`.
         # This will only happen before the player is started: `work` will never interfere
