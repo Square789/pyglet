@@ -501,8 +501,8 @@ class SoundSpaceWindow(pyglet.window.Window):
 
         # pixels per unit
         self.zoom = 40
-        self.tx = self.width/2
-        self.ty = self.height/2
+        self.tx = self.width / 2
+        self.ty = self.height / 2
 
         # The handle batch is drawn with a greatly zoomed view matrix
         self._grid_batch = pyglet.graphics.Batch()
@@ -605,7 +605,7 @@ class SoundSpaceWindow(pyglet.window.Window):
             self.tip.draw()
 
     def on_mouse_scroll(self, x, y, dx, dy):
-        self.zoom += dy * 10
+        self.zoom += int(dy * 10)
         self.zoom = min(max(self.zoom, 10), 100)
         self._refresh_grid()
 
