@@ -703,7 +703,6 @@ class PulseAudioOperation(PulseAudioMainloopChild):
     def delete(self) -> None:
         """Unref and delete the operation."""
         if self._pa_operation is not None:
-            assert _debug(f"PulseAudioOperation.delete({id(self):X})")
             pa.pa_operation_unref(self._pa_operation)
             self._pa_operation = None
             self.callback_lump = None

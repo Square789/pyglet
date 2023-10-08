@@ -165,8 +165,9 @@ class PulseAudioPlayer(AbstractAudioPlayer):
         self._audio_data_buffer = _AudioDataBuffer(self._singlebuffer_ideal_size,
                                                    self._buffered_data_comfortable_limit)
 
-        # A lock that should be held whenever the audio data buffer is accessed, as well as
-        # when stuff involving _pyglet_source_exhausted and _pending_bytes runs.
+        # A lock that should be held whenever the audio data buffer is accessed, or
+        # any variables really, if they are shared between PA callbacks and the rest of
+        # implemented methods.
         # Should prevent The PA callback from interfering with the work method.
         # Don't ever acquire the PA mainloop lock when this is held, might risk a deadlock
         # if a callback runs at an unfortunate time.
@@ -261,6 +262,11 @@ class PulseAudioPlayer(AbstractAudioPlayer):
             if self._pending_bytes > 0 and self._audio_data_buffer.available > 0:
                 written = self._write_to_stream(self._pending_bytes)
                 self._pending_bytes -= written
+                # If the stream underran before, trigger it for immediate playback.
+                # Unsure whether this call is really needed, but it shouldn't break anything.
+                if self._has_underrun:
+                    self.stream.trigger().wait().delete()
+                    self._has_underrun = False
 
     def work(self) -> None:
         with self.driver.mainloop.lock:

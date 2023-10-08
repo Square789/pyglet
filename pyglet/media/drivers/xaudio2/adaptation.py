@@ -110,8 +110,8 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
         self._audio_data_in_use: Deque['AudioData'] = deque()
         self._pyglet_source_exhausted = False
 
-        # A lock to be held whenever modifying things relating to the in-use audio data and
-        # flush operation. Ensures that the XAudio2 callbacks will not interfere with the
+        # A lock to be held whenever modifying things relating to the in-use audio data.
+        # Ensures that the XAudio2 callbacks will not interfere with the
         # player operations.
         self._lock = threading.Lock()
 
@@ -233,7 +233,7 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
         xa2_buffer = interface.create_xa2_buffer(audio_data)
         self._audio_data_in_use.append(audio_data)
         self._xa2_source_voice.submit_buffer(xa2_buffer)
-        assert _debug(f"XAudio2: Submitted buffer of size {audio_data.length}")
+        assert _debug(f"XAudio2: Submitted buffer of size {audio_data.length}B")
 
         self.append_events(self._write_cursor, audio_data.events)
         self._write_cursor += audio_data.length
