@@ -254,9 +254,9 @@ class Source:
 
         def _on_player_eos():
             Source._players.remove(player)
-            # There is a closure on player. To get the refcount to 0,
-            # we need to delete this function.
+            # There is a closure on player. To break up that reference, delete this function.
             player.on_player_eos = None
+            player.delete()
 
         player.on_player_eos = _on_player_eos
         return player
