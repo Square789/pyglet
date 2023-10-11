@@ -28,7 +28,13 @@ def test_get_platform_driver():
     _delete_driver()
 
 
-class MockPlayerWithMockTime(MockPlayer):
+
+class _FakeDispatchEvent:
+    def dispatch_event(self, *_, **__):
+        pass
+
+
+class MockPlayerWithMockTime(MockPlayer, _FakeDispatchEvent):
     def __init__(self, event_loop):
         super().__init__(event_loop)
         self.last_seek_time = 0.0
@@ -81,6 +87,13 @@ def get_drivers():
         from pyglet.media.drivers import directsound
         drivers.append(directsound)
         ids.append('DirectSound')
+    except:
+        pass
+
+    try:
+        from pyglet.media.drivers import xaudio2
+        drivers.append(xaudio2)
+        ids.append('XAudio2')
     except:
         pass
 
