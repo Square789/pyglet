@@ -348,8 +348,7 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
                 ad[0:compensated_bytes] = first_frame * (compensated_bytes // afmt.bytes_per_frame)
                 ad[compensated_bytes:] = audio_data.data
 
-                audio_data = AudioData(
-                    ad, len(ad), audio_data.timestamp, audio_data.duration, audio_data.events)
+                audio_data = AudioData(ad, len(ad), audio_data.events)
 
         elif desync_bytes < 0:
             # Player falling behind
@@ -372,8 +371,6 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
                             audio_data.length - compensated_bytes,
                         ),
                         audio_data.length - compensated_bytes,
-                        audio_data.timestamp,
-                        audio_data.duration,
                         audio_data.events,
                     )
                     compensated_bytes *= -1

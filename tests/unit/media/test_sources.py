@@ -301,7 +301,7 @@ class SourceGroupTestCase(unittest.TestCase):
 
     def test_functionality(self):
         fake_data = ((b'a', 1000, 0.5), (b'b', 40000, 2.0), (b'c', 20000, 4.0), (b'd', 9992, 4.0))
-        audio_data = [AudioData(b * l, l, -1.0, d, []) for b, l, d in fake_data]
+        audio_data = [AudioData(b * l, l) for b, l, _ in fake_data]
         audio_data[0].timestamp = 1.23
 
         expected_data = b''.join(d * l for d, l, _ in fake_data)

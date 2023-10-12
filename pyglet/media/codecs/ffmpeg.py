@@ -805,7 +805,7 @@ class FFmpegSource(StreamingSource):
 
             return None
 
-        audio_data = AudioData(data, len(data), timestamp, duration, [])
+        audio_data = AudioData(data, len(data), [])
 
         while self._events and self._events[0].timestamp <= (timestamp + duration):
             event = self._events.pop(0)

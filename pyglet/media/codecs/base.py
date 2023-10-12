@@ -134,8 +134,6 @@ class AudioData:
     def __init__(self,
                  data: Union[bytes, ctypes.Array],
                  length: int,
-                 timestamp: float = -1.0,
-                 duration: float = -1.0,
                  events: Optional[List['MediaEvent']] = None) -> None:
 
         if isinstance(data, bytes):
@@ -159,8 +157,6 @@ class AudioData:
         # a readable buffer.
 
         self.length = length
-        self.timestamp = timestamp
-        self.duration = duration
         self.events = [] if events is None else events
 
 
@@ -585,15 +581,11 @@ class StaticMemorySource(Source):
             :class:`.AudioData`: Next packet of audio data, or ``None`` if
             there is no (more) data.
         """
-        offset = self._file.tell()
-        timestamp = float(offset) / self.audio_format.bytes_per_second
-
         data = self._file.read(num_bytes)
         if not data:
             return None
 
-        duration = float(len(data)) / self.audio_format.bytes_per_second
-        return AudioData(data, len(data), timestamp, duration, [])
+        return AudioData(data, len(data))
 
 
 class SourceGroup(Source):
@@ -658,23 +650,18 @@ class SourceGroup(Source):
             return None
 
         buffer = bytearray()
-        duration = 0.0
-        timestamp = None
 
         while self._sources and len(buffer) < num_bytes:
             audiodata = self._sources[0].get_audio_data(num_bytes)
             if audiodata:
-                if timestamp is None:
-                    timestamp = audiodata.timestamp
                 buffer += audiodata.data
-                duration += audiodata.duration
             else:
                 self._advance()
 
         if not buffer:
             return None
 
-        return AudioData(bytes(buffer), len(buffer), timestamp, duration, [])
+        return AudioData(bytes(buffer), len(buffer), [])
 
 
 class PreciseStreamingSource(StreamingSource):
@@ -756,7 +743,7 @@ class PreciseStreamingSource(StreamingSource):
 
         res = self._buffer[:num_bytes]
         del self._buffer[:num_bytes]
-        return AudioData(res, len(res), -1.0, -1.0, []) if res else None
+        return AudioData(res, len(res), []) if res else None
 
     def get_next_video_timestamp(self) -> Optional[float]:
         return self._source.get_next_video_timestamp()
