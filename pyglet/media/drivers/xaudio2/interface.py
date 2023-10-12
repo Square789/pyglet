@@ -117,12 +117,12 @@ class XAudio2Driver:
 
         self._emitting_voices = []  # Contains all of the emitting source voices.
         self._voice_pool = defaultdict(list)
-        self._in_use = {}  # All voices currently in use, mapped to their player.
+        self._in_use = {}  # All voices currently in use, mapped to their audio player.
 
         self._resetting_voices = {}  # All resetting voices, mapped to their resetter.
         self._silence = {}  # Map audio formats to silence for voice resetting ritual
 
-        self._players = []  # Only used for resetting/restoring xaudio2. Store players to callback.
+        self._players = []  # Used for resetting/restoring xaudio2. Stores high-level players to callback.
 
         self._create_xa2()
 
@@ -225,7 +225,7 @@ class XAudio2Driver:
         """Stops and destroys all active voices, then destroys XA2 instance."""
         for player in self._in_use.values():
             player.on_driver_destroy()
-            self._players.append(player)
+            self._players.append(player.player)
 
         self._delete_driver()
 
@@ -242,8 +242,6 @@ class XAudio2Driver:
             self._xaudio2.StopEngine()
             self._xaudio2.Release()
             self._xaudio2 = None
-
-            self._silence.clear()
 
     def enable_3d(self):
         """Initializes the prerequisites for 3D positional audio and initializes with default DSP settings."""
@@ -454,13 +452,7 @@ class XA2SourceVoice:
         self._emitter = None
 
         if self._voice is not None:
-            try:
-                self._voice.Stop(0, 0)
-                self._voice.FlushSourceBuffers()
-                self._voice.DestroyVoice()
-            except TypeError:
-                pass
-
+            self._voice.DestroyVoice()
             self._voice = None
 
         self._callback = None

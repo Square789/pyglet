@@ -182,8 +182,7 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
             self._play_cursor = 0
             self._write_cursor = 0
             self._pyglet_source_exhausted = False
-            self.driver._xa2_driver.return_voice(self._xa2_source_voice,
-                                                 self._audio_data_in_use)
+            self.driver._xa2_driver.return_voice(self._xa2_source_voice, self._audio_data_in_use)
             self._audio_data_in_use = deque()
         self._xa2_source_voice = self.driver._xa2_driver.get_source_voice(self.source.audio_format, self)
 
