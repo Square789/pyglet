@@ -106,22 +106,24 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         #   _has_underrun = True
         #   dispatch_on_eos()
         #
-        # Player backends might report an underflow via a callback.
+        # Player backends might report an underflow or buffer ends via a callback.
         # In that case, it should look something like this, but beware to protect
-        # appropiate sections with a lock, otherwise you are probably opening yourself
-        # up to really unlucky issues where the callback and work method may leave some
-        # variables in inconclusive states.
-        # update_play_cursor()
-        # dispatch_media_events()
-        # if not source_exhausted: # R1OzDXYFarg
-        #   if play_cursor_too_close_to_write_cursor():
-        #     get_and_submit_new_audio_data()
-        #     if _has_underrun:
-        #       if source_exhausted:
-        #         dispatch_eon_eos()
-        #       else:
-        #         restart_player()
-        #         _has_underrun = False
+        # appropiate sections (any time variables and buffers are used which get accessed by both
+        # callbacks and the work method) with a lock, otherwise you are probably opening yourself
+        # up to really unlucky issues where the callback is unscheduled in favor of the work
+        # method or vice versa, which may leave some variables in inconclusive states.
+        # work:
+        #  update_play_cursor()
+        #  dispatch_media_events()
+        #  if not source_exhausted:
+        #    if play_cursor_too_close_to_write_cursor():
+        #      get_and_submit_new_audio_data()
+        #      if _has_underrun:
+        #        if source_exhausted:
+        #          dispatch_eon_eos()
+        #        else:
+        #          restart_player()
+        #          _has_underrun = False
         #
         # on_underrun:
         #   if source_exhausted:
@@ -142,14 +144,19 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         #   `self.driver.worker.remove/add(self)` snippet in their `play`/`pause`
         #   implementations.
         #
-        # It may *not* get cleared.
-        # - It is illegal to call clear on an unpaused player, and only playing players
-        #   are in the worker thread.
-        #
         # It may get deleted.
         # - In this case, attempting to continue with the data will cause some sort of error
         #   To combat this, all `delete` implementations contain a form of
         #   `self.driver.worker.remove(self)`.
+        #
+        # It may *not* get cleared.
+        # - It is illegal to call `clear`` on an unpaused player, and only playing players
+        #   are in the worker thread.
+        #
+        # A native callback may run which changes the internal state of the player
+        # - See above; protecting some sections with a lock local to the player
+        #   Be sure to never hold the lock around get_audio_data; that ruins the entire
+        #   point of running work outside of native callbacks.
         #
         # NOTE: In order for these calls to be more reliable, `remove` should be the first
         # statement in such implementations and `add` the last one, to ensure that `work`
