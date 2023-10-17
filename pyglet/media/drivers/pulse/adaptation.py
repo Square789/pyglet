@@ -219,9 +219,10 @@ class PulseAudioPlayer(AbstractAudioPlayer):
             return
 
         refill_size = self._audio_data_buffer.get_ideal_refill_size(self._pending_bytes)
-        self._audio_data_lock.release()
         if refill_size == 0:
             return
+
+        self._audio_data_lock.release()
 
         refill_size = self.source.audio_format.align(refill_size)
         assert _debug(f"PulseAudioPlayer: Getting {refill_size}B of audio data")
