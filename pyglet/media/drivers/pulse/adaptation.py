@@ -174,7 +174,6 @@ class PulseAudioPlayer(AbstractAudioPlayer):
         self._audio_data_lock = threading.Lock()
 
         self._clear_write = False
-        self._playing = False
         self._has_underrun = False
 
         with driver.mainloop.lock:
@@ -297,18 +296,17 @@ class PulseAudioPlayer(AbstractAudioPlayer):
         assert _debug('PulseAudioPlayer.clear')
         super().clear()
 
-        with self._audio_data_lock:
-            self._clear_write = True
-            # self._pending_bytes = 0
-            # Do not reset pending_bytes. This indicates how much PA would like to
-            # have in this stream.
-            # After playing again, no write requests will be issued, with PA expecting data to be
-            # placed in the buffer as usual, so keep pending_bytes around.
-            # _clear_write will cause the data to be written at the read index, making it play
-            # asap.
-            self._pyglet_source_exhausted = False
-            self._audio_data_buffer.clear()
-            self._has_underrun = False
+        self._clear_write = True
+        # self._pending_bytes = 0
+        # Do not reset pending_bytes. This indicates how much PA would like to
+        # have in this stream.
+        # After playing again, no write requests will be issued, with PA expecting data to be
+        # placed in the buffer as usual, so keep pending_bytes around.
+        # _clear_write will cause the data to be written at the read index, making it play
+        # asap.
+        self._pyglet_source_exhausted = False
+        self._audio_data_buffer.clear()
+        self._has_underrun = False
 
         with self.stream.mainloop.lock:
             # Just hope that the read index is frozen while we're paused.
@@ -325,7 +323,6 @@ class PulseAudioPlayer(AbstractAudioPlayer):
                 self.stream.resume().wait().delete()
             assert not self.stream.is_corked()
 
-        self._playing = True
         self.driver.worker.add(self)
 
     def stop(self) -> None:
@@ -334,8 +331,6 @@ class PulseAudioPlayer(AbstractAudioPlayer):
 
         with self.stream.mainloop.lock:
             self.stream.pause().wait().delete()
-
-        self._playing = False
 
     def get_play_cursor(self) -> int:
         return self._get_read_index()
