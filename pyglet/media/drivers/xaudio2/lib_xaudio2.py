@@ -208,30 +208,6 @@ class IXAudio2VoiceCallback(com.Interface):
     ]
 
 
-class XAudio2VoiceCallback(com.COMObject):
-    """Callback class used to trigger when buffers or streams end.
-           WARNING: Whenever a callback is running, XAudio2 cannot generate audio.
-           Make sure these functions run as fast as possible and do not block/delay more than a few milliseconds.
-           MS Recommendation:
-           At a minimum, callback functions must not do the following:
-                - Access the hard disk or other permanent storage
-                - Make expensive or blocking API calls
-                - Synchronize with other parts of client code
-                - Require significant CPU usage
-    """
-    _interfaces_ = [IXAudio2VoiceCallback]
-
-    def __init__(self):
-        super().__init__()
-        self.on_buffer_end = None
-
-    def OnBufferEnd(self, pBufferContext):
-        self.on_buffer_end(pBufferContext)
-
-    def OnVoiceError(self, pBufferContext, hresult):
-        raise Exception(f"Error occurred during audio playback: {hresult}")
-
-
 class XAUDIO2_EFFECT_DESCRIPTOR(Structure):
     _fields_ = [
         ('pEffect', com.pIUnknown),
@@ -352,14 +328,6 @@ class IXAudio2EngineCallback(com.Interface):
         ('OnCriticalError',
          com.VOIDMETHOD(HRESULT)),
     ]
-
-
-class XA2EngineCallback(com.COMObject):
-    _interfaces_ = [IXAudio2EngineCallback]
-
-    def OnCriticalError(self, hresult):
-        raise Exception("Critical Error:", hresult)
-
 
 
 # -------------- 3D Audio Positioning----------

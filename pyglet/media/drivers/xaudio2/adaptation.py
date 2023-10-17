@@ -79,11 +79,6 @@ class XAudio2Listener(AbstractListener):
             _convert_coordinates(self._up_orientation))
 
 
-class FlushOperation(IntEnum):
-    FLUSH = 0
-    FLUSH_THEN_DELETE = 1
-
-
 class XAudio2AudioPlayer(AbstractAudioPlayer):
     def __init__(self, driver: 'XAudio2Driver', source: 'Source', player: 'Player') -> None:
         super().__init__(source, player)
@@ -113,7 +108,7 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
         # A lock to be held whenever modifying things relating to the in-use audio data.
         # Ensures that the XAudio2 callbacks will not interfere with the
         # player operations.
-        self._lock = threading.Lock()
+        self._audio_data_lock = threading.Lock()
 
         self._xa2_source_voice = self.driver._xa2_driver.get_source_voice(source.audio_format, self)
 
@@ -143,25 +138,19 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
             return
 
         assert _debug("XAudio2: Player deleted, returning voice")
-        self.driver.worker.remove(self)
-        with self._lock:
-            self.stop()
-            self.driver._xa2_driver.return_voice(self._xa2_source_voice, self._audio_data_in_use)
-            self.driver = None
-            self._xa2_source_voice = None
+
+        self.stop()
+        self.driver._xa2_driver.return_voice(self._xa2_source_voice, self._audio_data_in_use)
+        self.driver = None
+        self._xa2_source_voice = None
 
     def play(self) -> None:
-        self._lock.acquire()
         assert _debug(f'XAudio2 play: {self._playing=}')
 
         if not self._playing:
             self._playing = True
             self._xa2_source_voice.play()
-            self._lock.release()
             self.driver.worker.add(self)
-            return
-
-        self._lock.release()
 
         assert _debug('return XAudio2 play')
 
@@ -170,26 +159,27 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
 
         if self._playing:
             self.driver.worker.remove(self)
+            # no callback could possibly be running after this lock is released.
+            with self.driver._xa2_driver.lock:
+                self._xa2_source_voice.stop()
             self._playing = False
-            self._xa2_source_voice.stop()
 
         assert _debug('return XAudio2 stop')
 
     def clear(self) -> None:
         assert _debug('XAudio2 clear')
         super().clear()
-        with self._lock:
-            self._play_cursor = 0
-            self._write_cursor = 0
-            self._pyglet_source_exhausted = False
-            self.driver._xa2_driver.return_voice(self._xa2_source_voice, self._audio_data_in_use)
-            self._audio_data_in_use = deque()
+        self._play_cursor = 0
+        self._write_cursor = 0
+        self._pyglet_source_exhausted = False
+        self.driver._xa2_driver.return_voice(self._xa2_source_voice, self._audio_data_in_use)
+        self._audio_data_in_use = deque()
         self._xa2_source_voice = self.driver._xa2_driver.get_source_voice(self.source.audio_format, self)
 
     def on_buffer_end(self, buffer_context_ptr: int) -> None:
         # Called from the XAudio2 thread.
         # A buffer stopped being played by the voice, it should by all means be the first one
-        with self._lock:
+        with self._audio_data_lock:
             assert self._audio_data_in_use
             self._audio_data_in_use.popleft()
             # This should cause the AudioData to lose all its references and be gc'd
@@ -218,9 +208,9 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
         """
         assert _debug(f"XAudio2: Retrieving new buffer of {refill_size}B")
 
-        self._lock.release()
+        self._audio_data_lock.release()
         audio_data = self._get_and_compensate_audio_data(refill_size, self._play_cursor)
-        self._lock.acquire()
+        self._audio_data_lock.acquire()
 
         if audio_data is None:
             assert _debug(f"XAudio2: Source is out of data")
@@ -246,7 +236,7 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
         return self._play_cursor
 
     def work(self) -> None:
-        with self._lock:
+        with self._audio_data_lock:
             self._update_play_cursor()
             self.dispatch_media_events(self._play_cursor)
             self._maybe_refill()
@@ -264,7 +254,7 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
         return True
 
     def prefill_audio(self) -> None:
-        with self._lock:
+        with self._audio_data_lock:
             self._maybe_refill()
 
     def set_volume(self, volume: float) -> None:

@@ -1,5 +1,6 @@
-import weakref
 from collections import namedtuple, defaultdict
+import threading
+import weakref
 
 from pyglet.media.devices.base import DeviceFlow
 
@@ -33,9 +34,9 @@ def create_xa2_waveformat(audio_format):
 
 
 class _VoiceResetter:
-    """A voice resetter managing a voice during its reset period.
-    This process is convoluted, but the only thing capable of restoring a
-    voice's reported `SamplesPlayed`.
+    """Manage a voice during its reset period.
+    This process is convoluted, but the only thing capable of resetting a
+    voice's reported `SamplesPlayed` to zero.
     """
 
     def __init__(self, driver, voice, voice_key, remaining_data) -> None:
@@ -89,6 +90,51 @@ class _VoiceResetter:
         self.driver._return_reset_voice(self.voice, self.voice_key)
 
 
+class XA2EngineCallback(com.COMObject):
+    _interfaces_ = [lib.IXAudio2EngineCallback]
+
+    def __init__(self, lock):
+        self._lock = lock
+
+    def OnProcessingPassStart(self):
+        self._lock.acquire()
+
+    def OnProcessingPassEnd(self):
+        self._lock.release()
+
+    def OnCriticalError(self, hresult):
+        # This is a textbook bad example, yes.
+        # It's probably safe though: assuming that XA2 has ceased to operate if we ever end up
+        # here, nothing can release the lock inbetween.
+        if self._lock.locked():
+            self._lock.release()
+        raise Exception("Critical Error:", hresult)
+
+
+class XAudio2VoiceCallback(com.COMObject):
+    """Callback class used to trigger when buffers or streams end.
+           WARNING: Whenever a callback is running, XAudio2 cannot generate audio.
+           Make sure these functions run as fast as possible and do not block/delay more than a few milliseconds.
+           MS Recommendation:
+           At a minimum, callback functions must not do the following:
+                - Access the hard disk or other permanent storage
+                - Make expensive or blocking API calls
+                - Synchronize with other parts of client code
+                - Require significant CPU usage
+    """
+    _interfaces_ = [lib.IXAudio2VoiceCallback]
+
+    def __init__(self):
+        super().__init__()
+        self.on_buffer_end = None
+
+    def OnBufferEnd(self, pBufferContext):
+        self.on_buffer_end(pBufferContext)
+
+    def OnVoiceError(self, pBufferContext, hresult):
+        raise Exception(f"Error occurred during audio playback: {hresult}")
+
+
 class XAudio2Driver:
     # Specifies if positional audio should be used. Can be enabled later, but not disabled.
     allow_3d = True
@@ -114,6 +160,18 @@ class XAudio2Driver:
         self._listener = None
         self._xaudio2 = None
         self._dead = False
+
+        self.lock = threading.Lock()
+        # A lock that will prevent XAudio2 from running any callbacks (processing audio at all)
+        # while it is held. Must be acquired by audio players in certain situations in order to
+        # ensure that the following, very unlikely, sequence of events does not happen:
+        # - an on_buffer_end callback is made
+        # - this causes python to create a dummy thread to run its code
+        # - very early on, before it could acquire any protective locks, the thread is deactivated
+        #   and the main thread runs
+        # - the main thread runs a critical operation on the player such as `delete` to completion
+        # - the callback is resumed and breaks as the audio player is deleted.
+        self._engine_callback = XA2EngineCallback(self._lock)
 
         self._emitting_voices = []  # Contains all of the emitting source voices.
         self._voice_pool = defaultdict(list)
@@ -181,6 +239,8 @@ class XAudio2Driver:
 
             self._xaudio2.SetDebugConfiguration(ctypes.byref(debug), None)
 
+        self._xaudio2.RegisterForCallbacks(self._engine_callback)
+
         self._master_voice = lib.IXAudio2MasteringVoice()
         self._xaudio2.CreateMasteringVoice(byref(self._master_voice),
                                            lib.XAUDIO2_DEFAULT_CHANNELS,
@@ -239,6 +299,7 @@ class XAudio2Driver:
             # Destroy all pooled voices as master will change.
             self._destroy_voices()
 
+            self._xaudio2.UnregisterForCallbacks(self._engine_callback)
             self._xaudio2.StopEngine()
             self._xaudio2.Release()
             self._xaudio2 = None
@@ -321,7 +382,7 @@ class XAudio2Driver:
         return self._listener
 
     def return_voice(self, voice, remaining_data):
-        """Reset a voice and eventually return it to the pool. It may not be playing.
+        """Reset a voice and eventually return it to the pool. The voice must be stopped.
         `remaining_data` should contain the data this voice's remaining
         buffers point to.
         It will be `.clear()`ed shortly after as soon as the flush initiated
@@ -345,9 +406,9 @@ class XAudio2Driver:
         assert _debug(f"XA2AudioDriver: {voice} back in pool")
 
     def get_source_voice(self, audio_format, player):
-        """ Get a source voice from the pool. Source voice creation can be slow to create/destroy. So pooling is
-            recommended. We pool based on audio channels as channels must be the same as well as frequency.
-            Source voice handles all of the audio playing and state for a single source."""
+        """Get a source voice from the pool. Source voice creation can be slow to create/destroy.
+        So pooling is recommended. We pool based on audio channels.
+        A source voice handles all of the audio playing and state for a single source."""
 
         voice_key = (audio_format.channels, audio_format.sample_size)
         if not self._voice_pool[voice_key]:
@@ -371,7 +432,7 @@ class XAudio2Driver:
         return voice
 
     def _create_new_voice(self, audio_format):
-        """Has the driver create a new source voice for the source."""
+        """Has the driver create a new source voice for the given audio format."""
         voice = lib.IXAudio2SourceVoice()
 
         wfx_format = create_xa2_waveformat(audio_format)
