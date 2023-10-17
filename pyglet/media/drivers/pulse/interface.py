@@ -101,7 +101,6 @@ class PulseAudioMainloop:
         self._pa_threaded_mainloop = pa.pa_threaded_mainloop_new()
         self._pa_mainloop_vtab = pa.pa_threaded_mainloop_get_api(self._pa_threaded_mainloop)
         self.lock = _MainloopLock(self)
-        self._lock_count = 0
 
     def start(self) -> None:
         """Start running the mainloop."""
@@ -124,13 +123,10 @@ class PulseAudioMainloop:
         calls into PA."""
         assert self._pa_threaded_mainloop is not None
         pa.pa_threaded_mainloop_lock(self._pa_threaded_mainloop)
-        self._lock_count += 1
 
     def unlock(self) -> None:
         """Unlock the mainloop thread."""
         assert self._pa_threaded_mainloop is not None
-        assert self._lock_count > 0
-        self._lock_count -= 1
         pa.pa_threaded_mainloop_unlock(self._pa_threaded_mainloop)
 
     def signal(self) -> None:
@@ -139,16 +135,13 @@ class PulseAudioMainloop:
         pa.pa_threaded_mainloop_signal(self._pa_threaded_mainloop, 0)
 
     def wait(self) -> None:
-        """Wait for a signal."""
+        """Unlock and then Wait for a signal from the locked mainloop.
+        It's important to note that the PA mainloop lock is reentrant, yet this method only
+        releases one lock.
+        Before returning, the lock is reacquired.
+        """
         assert self._pa_threaded_mainloop is not None
-        # Although lock and unlock can be called reentrantly, the wait call only releases one lock.
-        assert self._lock_count > 0
-        original_lock_count = self._lock_count
-        while self._lock_count > 1:
-            self.unlock()
         pa.pa_threaded_mainloop_wait(self._pa_threaded_mainloop)
-        while self._lock_count < original_lock_count:
-            self.lock_()
 
     def create_context(self) -> 'PulseAudioContext':
         """Construct and return a new context in this mainloop.

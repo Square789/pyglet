@@ -251,6 +251,7 @@ class PulseAudioPlayer(AbstractAudioPlayer):
             self.stream.write(data_ptr, bytes_written, seek_mode)
             self._clear_write = False
 
+        assert _debug(f"PulseAudioPlayer: Wrote {bytes_written}/{nbytes}")
         return bytes_written
 
     def _update_and_get_timing_info(self) -> Optional[pa.pa_timing_info]:
