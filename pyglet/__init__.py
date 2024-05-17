@@ -292,10 +292,10 @@ class Options:
     def get(self, item: str, default: Any = None) -> Any:
         return self.__dict__.get(item, default)
 
-    def items(self) -> ItemsView[str, Any]:
+    def items(self) -> ItemsView[Any, Any]:
         return self.__dict__.items()
 
-    def __getitem__(self, item: str) -> Any:
+    def __getitem__(self, item: Any) -> Any:
         return self.__dict__[item]
 
     def __setitem__(self, key: str, value: Any) -> None:
