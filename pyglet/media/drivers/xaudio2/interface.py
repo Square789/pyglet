@@ -252,17 +252,6 @@ class XAudio2Driver:
             voice.destroy()
         self._in_use.clear()
 
-    def set_device(self, device):
-        """Attach XA2 with a specific device rather than the virtual device."""
-        self._shutdown_xaudio2()
-        self._create_xa2(device.id)
-
-        # Notify all active players it's reset.
-        for player in self._players:
-            player.dispatch_event('on_driver_reset')
-
-        self._players.clear()
-
     def _shutdown_xaudio2(self):
         """Stops and destroys all active voices, then destroys XA2 instance."""
         for player in self._in_use.values():
