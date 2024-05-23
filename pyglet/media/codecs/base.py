@@ -162,6 +162,17 @@ class AudioData:
         self.duration = duration
         self.events = [] if events is None else events
 
+    def copy_chunk(self, offset: int) -> 'AudioData':
+        # NOTE: Events are incorrectly handled.
+        if offset >= self.length:
+            return AudioData(b"", 0, events=self.events)
+
+        return AudioData(
+            ctypes.string_at(self.pointer + offset, self.length - offset),
+            self.length - offset,
+            events=self.events,
+        )
+
 
 class SourceInfo:
     """Source metadata information.
