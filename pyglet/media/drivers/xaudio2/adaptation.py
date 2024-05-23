@@ -46,7 +46,7 @@ class XAudio2Driver(AbstractAudioDriver):
         if self._xa2_driver is not None:
             self.worker.stop()
             self.worker = None
-            self._xa2_driver._delete_driver()
+            self._xa2_driver.delete()
             self._xa2_driver = None
             self._xa2_listener = None
 
