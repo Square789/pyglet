@@ -389,14 +389,7 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
                     compensated_bytes = -audio_data.length
                     audio_data = None
                 else:
-                    audio_data = AudioData(
-                        ctypes.string_at(
-                            audio_data.pointer + compensated_bytes,
-                            audio_data.length - compensated_bytes,
-                        ),
-                        audio_data.length - compensated_bytes,
-                        audio_data.events,
-                    )
+                    audio_data = audio_data.copy_chunk(compensated_bytes)
                     compensated_bytes *= -1
 
         assert _debug(f"Compensated {compensated_bytes} after audio desync")
