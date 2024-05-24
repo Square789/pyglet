@@ -82,12 +82,7 @@ class XA2EngineCallback(com.COMObject):
         self._lock.release()
 
     def OnCriticalError(self, hresult):
-        # This is a textbook bad example, yes.
-        # It's probably safe though: assuming that XA2 has ceased to operate if we ever end up
-        # here, nothing can release the lock inbetween.
-        if self._lock.locked():
-            self._lock.release()
-        raise Exception("Critical Error:", hresult)
+        assert _debug(f"XAudio2EngineCallback.OnCriticalError: {hresult}")
 
 
 class XAudio2VoiceCallback(com.COMObject):
@@ -130,12 +125,14 @@ class XAudio2Driver:
     # Max Frequency a voice can have. Setting this higher/lower will increase/decrease memory allocation.
     max_frequency_ratio = 2.0
 
-    def __init__(self):
+    def __init__(self, pyglet_driver) -> None:
         """Creates an XAudio2 master voice and sets up 3D audio if specified. This attaches to the default audio
         device and will create a virtual audio endpoint that changes with the system. It will not recover if a
         critical error is encountered such as no more audio devices are present.
         """
         assert _debug('Constructing XAudio2Driver')
+        self._pyglet_driver = pyglet_driver
+
         self._listener = None
         self._xaudio2 = None
         self._dead = False
@@ -153,12 +150,14 @@ class XAudio2Driver:
         self._engine_callback = XA2EngineCallback(self.lock)
 
         self._emitting_voices = []  # Contains all playing source voices with an emitter.
-        self._voice_pool = defaultdict(list)
+        self._voice_pool = defaultdict(list)  # Maps voice keys to lists of voices ready to use.
         self._in_use = {}  # All voices currently in use, mapped to their audio player.
-
         self._resetting_voices = {}  # All resetting voices, mapped to their resetter.
 
         self._players = []  # Used for resetting/restoring xaudio2. Stores high-level players to callback.
+
+        self._x3d_handle = None
+        self._dsp_settings = None
 
         self._create_xa2()
 
@@ -177,9 +176,11 @@ class XAudio2Driver:
         """Hack/workaround, you cannot shutdown/create XA2 within a COM callback, set a schedule to check state."""
         if self._dead is True:
             if self._xaudio2:
+                assert _debug("XAudio2Driver._check_state: shutting down")
                 self._shutdown_xaudio2()
         else:
             if not self._xaudio2:
+                assert _debug("XAudio2Driver._check_state: recreating and resetting")
                 self._create_xa2()
                 # Notify all active it's reset.
                 for player in self._players:
@@ -227,14 +228,11 @@ class XAudio2Driver:
                                            0, device_id, None, self.category)
         self._master_voice.GetVoiceDetails(byref(self._mvoice_details))
 
-        self._x3d_handle = None
-        self._dsp_settings = None
+        self._listener = XAudio2Listener(self)
+        self._pyglet_driver._listener.connect(self, self._listener)
+
         if self.allow_3d:
             self.enable_3d()
-
-    @property
-    def active_voices(self):
-        return self._in_use.keys()
 
     def _destroy_voices(self):
         """Destroy and clear all voice pools."""
@@ -248,12 +246,16 @@ class XAudio2Driver:
             resetter.destroy()
         self._resetting_voices.clear()
 
-        for voice in self.active_voices:
+        self._emitting_voices.clear()
+        for voice in self._in_use.keys():
             voice.destroy()
         self._in_use.clear()
 
     def _shutdown_xaudio2(self):
-        """Stops and destroys all active voices, then destroys XA2 instance."""
+        """
+        Shutdown XAudio2 driver with intent of recreating it.
+        Record all active players into ``self._players``, then delete the driver.
+        """
         for player in self._in_use.values():
             player.on_driver_destroy()
             self._players.append(player.player)
@@ -263,9 +265,15 @@ class XAudio2Driver:
     def _delete_driver(self):
         if self._xaudio2:
             assert _debug("XAudio2Driver: Deleting")
+
+            self._pyglet_driver._listener.disconnect()
+            self._listener = None
+
             # Stop 3d
             if self.allow_3d:
                 pyglet.clock.unschedule(self._calculate_3d_sources)
+                self._x3d_handle = None
+                self._dsp_settings = None
 
             # Destroy all pooled voices as master will change.
             self._destroy_voices()
@@ -344,11 +352,6 @@ class XAudio2Driver:
         pf = lib.XAUDIO2_PERFORMANCE_DATA()
         self._xaudio2.GetPerformanceData(ctypes.byref(pf))
         return pf
-
-    def create_listener(self):
-        assert self._listener is None, "You can only create one listener."
-        self._listener = XAudio2Listener(self)
-        return self._listener
 
     def return_voice(self, voice, remaining_data):
         """Reset a voice and eventually return it to the pool. The voice must be stopped.
