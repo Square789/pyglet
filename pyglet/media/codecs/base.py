@@ -650,12 +650,34 @@ class PreciseStreamingSource(StreamingSource):
         self._exhausted = False
         self._is_player_source = False
 
-        # Forward formats, info and duration
-        self.audio_format = source.audio_format
-        self.video_format = source.video_format
-        self.info = source.info
+    # Forward formats, info and duration (duration read-only as usual)
+    @property
+    def audio_format(self) -> Optional[AudioFormat]:
+        return self._source.audio_format
 
-        self._duration = source.duration
+    @audio_format.setter
+    def audio_format(self, audio_format: Optional[AudioFormat]) -> None:
+        self._source.audio_format = audio_format
+
+    @property
+    def video_format(self) -> Optional[VideoFormat]:
+        return self._source.video_format
+
+    @video_format.setter
+    def video_format(self, video_format: Optional[VideoFormat]) -> None:
+        self._source.video_format = video_format
+
+    @property
+    def info(self) -> Optional[SourceInfo]:
+        return self._source.info
+
+    @info.setter
+    def info(self, info: Optional[SourceInfo]) -> None:
+        self._source.info = info
+
+    @property
+    def duration(self) -> float:
+        return self._source.duration
 
     @property
     def is_player_source(self) -> bool:
