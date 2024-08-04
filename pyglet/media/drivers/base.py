@@ -1,11 +1,18 @@
+from __future__ import annotations
+
+from abc import ABCMeta, abstractmethod
 from collections import deque
 import ctypes
+from typing import Any, Iterable, TYPE_CHECKING
 import weakref
-from abc import ABCMeta, abstractmethod
 
 import pyglet
 from pyglet.media.codecs import AudioData
 from pyglet.util import debug_print, next_or_equal_power_of_two
+
+if TYPE_CHECKING:
+    from pyglet.media.drivers.listener import AbstractListener
+    from pyglet.media import Source, Player
 
 
 _debug = debug_print('debug_media')
@@ -22,12 +29,12 @@ class SourcePrecisionBuffer:
     events.
     """
 
-    def __init__(self, source):
+    def __init__(self, source: Source) -> None:
         self._source = weakref.proxy(source)
         self._buffer = bytearray()
         self._exhausted = False
 
-    def get_audio_data(self, requested_size):
+    def get_audio_data(self, requested_size: int) -> AudioData | None:
         if self._exhausted:
             return None
 
@@ -71,10 +78,10 @@ class SourcePrecisionBuffer:
         del self._buffer[:requested_size]
         return AudioData(res, len(res))
 
-    def set_source(self, source):
+    def set_source(self, source: Source) -> None:
         self._source = weakref.proxy(source)
 
-    def reset(self):
+    def reset(self) -> None:
         self._buffer.clear()
         self._exhausted = False
 
@@ -92,7 +99,7 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
 
     audio_buffer_length = 0.9
 
-    def __init__(self, source, player):
+    def __init__(self, source: Source, player: Player) -> None:
         """Create a new audio player.
 
         :Parameters:
@@ -139,15 +146,15 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         # Negative when data was skipped, positive if it was padded in.
         self._compensated_bytes = 0
 
-    def on_driver_destroy(self):
+    def on_driver_destroy(self) -> None:
         """Called before the audio driver is going to be destroyed (a planned destroy)."""
         pass
 
-    def on_driver_reset(self):
+    def on_driver_reset(self) -> None:
         """Called after the audio driver has been re-initialized."""
         pass
 
-    def set_source(self, source):
+    def set_source(self, source: Source) -> None:
         """Change the player's source for a new one.
         It must be of the same audio format.
         Will clear the player, make sure you paused it beforehand.
@@ -165,7 +172,7 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
             self._precision_buffer.set_source(source)
 
     @abstractmethod
-    def prefill_audio(self):
+    def prefill_audio(self) -> None:
         """Prefill the audio buffer with audio data.
 
         This method is called before the audio player starts in order to
@@ -174,7 +181,7 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         # It is illegal to call this method while the player is playing.
 
     @abstractmethod
-    def work(self):
+    def work(self) -> None:
         """Ran regularly by the worker thread. This method should fill up
         the player's buffers if required, and dispatch any necessary events.
         """
@@ -183,15 +190,15 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         pass
 
     @abstractmethod
-    def play(self):
+    def play(self) -> None:
         """Begin playback."""
 
     @abstractmethod
-    def stop(self):
+    def stop(self) -> None:
         """Stop (pause) playback."""
 
     @abstractmethod
-    def clear(self):
+    def clear(self) -> None:
         """Clear all buffered data and prepare for replacement data.
 
         The player must be stopped before calling this method.
@@ -204,13 +211,13 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
             self._precision_buffer.reset()
 
     @abstractmethod
-    def delete(self):
+    def delete(self) -> None:
         """Stop playing and clean up all resources used by player."""
         # This may be called from high level Players on shutdown after the player's driver
         # has been deleted. AudioPlayer implementations must handle this.
 
     @abstractmethod
-    def get_play_cursor(self):
+    def get_play_cursor(self) -> int:
         """Get this player's most recent play cursor/read index/byte offset,
         starting from the last clear operation or initialization.
 
@@ -221,7 +228,8 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         # It is not supposed to be accurate; accurate play cursor info is always
         # passed into the corresponding methods from the implementation subclass.
 
-    def get_time(self):
+    def get_time(self) -> float:
+
         """Retrieve the time in the current source the player is at, in seconds.
         By default, calculated using :meth:`get_play_cursor`, divided by the
         bytes per second played.
@@ -229,27 +237,27 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         # See notes on `get_play_cursor` as well.
         return self._raw_play_cursor_to_time(self.get_play_cursor()) + self.player.last_seek_time
 
-    def _raw_play_cursor_to_time(self, cursor):
+    def _raw_play_cursor_to_time(self, cursor: int) -> float:
         if cursor is None:
             return None
         return self._to_perceived_play_cursor(cursor) / self.source.audio_format.bytes_per_second
 
-    def _to_perceived_play_cursor(self, play_cursor):
+    def _to_perceived_play_cursor(self, play_cursor) -> int:
         return play_cursor - self._compensated_bytes
 
-    def _play_group(self, audio_players):
+    def _play_group(self, audio_players: Iterable[AbstractAudioPlayer]) -> None:
         """Begin simultaneous playback on a list of audio players."""
         # This should be overridden by subclasses for better synchrony.
         for player in audio_players:
             player.play()
 
-    def _stop_group(self, audio_players):
+    def _stop_group(self, audio_players: Iterable[AbstractAudioPlayer]) -> None:
         """Stop simultaneous playback on a list of audio players."""
         # This should be overridden by subclasses for better synchrony.
         for player in audio_players:
             player.stop()
 
-    def append_events(self, start_index, events):
+    def append_events(self, start_index: int, events: Iterable[MediaEvent]) -> None:
         """Append the given :class:`MediaEvent`s to the events deque using
         the current source's audio format and the supplied ``start_index``
         to convert their timestamps to dispatch indices.
@@ -264,7 +272,7 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
             assert _debug(f'AbstractAudioPlayer: Adding event {event} at {event_cursor}')
             self._events.append((event_cursor, event))
 
-    def dispatch_media_events(self, until_cursor):
+    def dispatch_media_events(self, until_cursor: int) -> None:
         """Dispatch all :class:`MediaEvent`s whose index is less than or equal
         to the specified ``until_cursor`` (which should be a very recent play
         cursor position).
@@ -276,7 +284,7 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         while self._events and self._events[0][0] <= until_cursor:
             self._events.popleft()[1].sync_dispatch_to_player(self.player)
 
-    def get_audio_time_diff(self, audio_time):
+    def get_audio_time_diff(self, audio_time: float | None) -> tuple[int, bool]:
         """Query the difference between the provided time and the high
         level `Player`'s master clock.
 
@@ -330,12 +338,14 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
 
         return 0, False
 
-    def _get_audio_data(self, requested_size):
+    def _get_audio_data(self, requested_size: int) -> AudioData | None:
         if self._precision_buffer is None:
             return self.source.get_audio_data(requested_size)
         return self._precision_buffer.get_audio_data(requested_size)
 
-    def _get_and_compensate_audio_data(self, requested_size, audio_position=None):
+    def _get_and_compensate_audio_data(self,
+                                       requested_size: int,
+                                       audio_position: int | None = None) -> AudioData | None:
         """
         Retrieve a packet of `AudioData` of the given size.
         """
@@ -397,54 +407,54 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
 
         return audio_data
 
-    def set_volume(self, volume):
+    def set_volume(self, volume: float) -> None:
         """See `Player.volume`."""
         pass
 
-    def set_position(self, position):
+    def set_position(self, position: tuple[float, float, float]) -> None:
         """See :py:attr:`~pyglet.media.Player.position`."""
         pass
 
-    def set_min_distance(self, min_distance):
+    def set_min_distance(self, min_distance: float) -> None:
         """See `Player.min_distance`."""
         pass
 
-    def set_max_distance(self, max_distance):
+    def set_max_distance(self, max_distance: float) -> None:
         """See `Player.max_distance`."""
         pass
 
-    def set_pitch(self, pitch):
+    def set_pitch(self, pitch: float) -> None:
         """See :py:attr:`~pyglet.media.Player.pitch`."""
         pass
 
-    def set_cone_orientation(self, cone_orientation):
+    def set_cone_orientation(self, cone_orientation: tuple[float, float, float]) -> None:
         """See `Player.cone_orientation`."""
         pass
 
-    def set_cone_inner_angle(self, cone_inner_angle):
+    def set_cone_inner_angle(self, cone_inner_angle: float) -> None:
         """See `Player.cone_inner_angle`."""
         pass
 
-    def set_cone_outer_angle(self, cone_outer_angle):
+    def set_cone_outer_angle(self, cone_outer_angle: float) -> None:
         """See `Player.cone_outer_angle`."""
         pass
 
-    def set_cone_outer_gain(self, cone_outer_gain):
+    def set_cone_outer_gain(self, cone_outer_gain: float) -> None:
         """See `Player.cone_outer_gain`."""
         pass
 
 
 class AbstractAudioDriver(metaclass=ABCMeta):
     @abstractmethod
-    def create_audio_player(self, source, player):
+    def create_audio_player(self, source: Source, player: Player) -> AbstractAudioPlayer:
         pass
 
     @abstractmethod
-    def get_listener(self):
+    def get_listener(self) -> AbstractListener:
         pass
 
     @abstractmethod
-    def delete(self):
+    def delete(self) -> None:
         pass
 
 
@@ -463,19 +473,19 @@ class MediaEvent:
 
     __slots__ = 'event', 'timestamp', 'args'
 
-    def __init__(self, event, timestamp=0.0, *args):
+    def __init__(self, event: str, timestamp: float = 0.0, *args: Any) -> None:
         # Meaning of timestamp is dependent on context; and not seen by application.
         self.event = event
         self.timestamp = timestamp
         self.args = args
 
-    def sync_dispatch_to_player(self, player):
+    def sync_dispatch_to_player(self, player: Player) -> None:
         pyglet.app.platform_event_loop.post_event(player, self.event, *self.args)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"MediaEvent({self.event}, {self.timestamp}, {self.args})"
 
-    def __lt__(self, other):
+    def __lt__(self, other: object) -> bool:
         if not isinstance(other, MediaEvent):
             return NotImplemented
         return self.timestamp < other.timestamp
