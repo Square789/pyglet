@@ -122,6 +122,9 @@ class _InterfaceMeta(_StructMeta):
         if not '_methods_' in dct:
             dct['_methods_'] = ()
 
+        if not '_iid_' in dct:
+            dct['_iid_'] = None
+
         inh_methods = []
         if bases[0] is not ctypes.Structure:  # Method does not exist for first definition below
             for interface_type in (bases[0].get_interface_inheritance()):
@@ -172,7 +175,7 @@ class _pInterfaceMeta(_PointerMeta):
             # Create corresponding interface type and then set it as target
             target = _InterfaceMeta(f"_{name}_HelperInterface",
                                     (interface_base,),
-                                    {'_methods_': dct.get('_methods_', ())},
+                                    {'_methods_': dct.get('_methods_', ()), '_iid_': dct.get('_iid_', None)},
                                     create_pointer_type=False)
             dct['_type_'] = target
 
@@ -279,6 +282,33 @@ def _adjust_impl(interface_name, method_name, original_method, offset):
     return adjustor_cb_func
 
 
+def _COMObject_QueryInterface(self, iid_ptr, res_ptr):
+    if not res_ptr:
+        return E_POINTER
+
+    offset = self._guid_to_vtbl_offset.get(iid_ptr[0], None)
+    if offset is None:
+        ctypes.cast(res_ptr, ctypes.POINTER(ctypes.c_void_p))[0] = 0
+        return E_NOINTERFACE
+
+    ctypes.cast(res_ptr, ctypes.POINTER(ctypes.c_void_p))[0] = ctypes.addressof(self._struct) + offset
+    return S_OK
+
+
+def _COMObject_AddRef(self):
+    self._vrefcount += 1
+    return self._vrefcount
+
+
+def _COMObject_Release(self):
+    if self._vrefcount <= 0:
+        assert _debug_com(
+            f"COMObject {self}: Release while refcount was {self._vrefcount}"
+        )
+    self._vrefcount -= 1
+    return self._vrefcount
+
+
 class COMObject:
     """A COMObject for implementing C callbacks in Python.
     Specify the interface types it supports in `_interfaces_`, and any methods to be implemented
@@ -317,32 +347,25 @@ class COMObject:
         # Map all leaf and inherited interfaces to the offset of the vtable containing
         # their implementations
         _interface_to_vtbl_offset = {}
+        _guid_to_vtbl_offset = {}
         for i, interface_type in enumerate(implemented_leaf_interfaces):
             bases = interface_type.get_interface_inheritance()
             for base in bases:
                 if base not in _interface_to_vtbl_offset:
                     _interface_to_vtbl_offset[base] = i * _ptr_size
+                    if interface_type._iid_ is not None:
+                        _guid_to_vtbl_offset[interface_type._iid_] = i * _ptr_size
+
+        if _guid_to_vtbl_offset and len(_guid_to_vtbl_offset) != len(_interface_to_vtbl_offset):
+            assert _debug_com(f"GUID map only partially populated for COMObject {cls.__name__}")
 
         if IUnknown in _interface_to_vtbl_offset:
-            def QueryInterface(self, iid_ptr, res_ptr):
-                ctypes.cast(res_ptr, ctypes.POINTER(ctypes.c_void_p))[0] = 0
-                return E_NOINTERFACE
-
-            def AddRef(self):
-                self._vrefcount += 1
-                return self._vrefcount
-
-            def Release(self):
-                if self._vrefcount <= 0:
-                    assert _debug_com(
-                        f"COMObject {self}: Release while refcount was {self._vrefcount}"
-                    )
-                self._vrefcount -= 1
-                return self._vrefcount
-
-            cls.QueryInterface = QueryInterface
-            cls.AddRef = AddRef
-            cls.Release = Release
+            if not hasattr(cls, "QueryInterface"):
+                cls.QueryInterface = _COMObject_QueryInterface
+            if not hasattr(cls, "AddRef"):
+                cls.Addref = _COMObject_AddRef
+            if not hasattr(cls, "Release"):
+                cls.Release = _COMObject_Release
 
         for i, interface_type in enumerate(implemented_leaf_interfaces):
             wrappers = []
@@ -380,6 +403,7 @@ class COMObject:
         fields.append(('self_', ctypes.py_object))
 
         cls._interface_to_vtbl_offset = _interface_to_vtbl_offset
+        cls._guid_to_vtbl_offset = _guid_to_vtbl_offset
         cls._vtbl_pointers = _vtbl_pointers
         cls._struct_type = _StructMeta(f"{cls.__name__}_Struct", (ctypes.Structure,), {'_fields_': fields})
 
