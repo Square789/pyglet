@@ -128,6 +128,7 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
         self._xa2_source_voice = self.driver._xa2_driver.get_source_voice(source.audio_format, self)
 
     def on_driver_destroy(self) -> None:
+        return
         # This is called by an event, so likely not in an application's update.
         # We don't assume threading clashes with play/pause etc, and the worker thread is taken
         # care of below. Expecting XAudio to not make processing callbacks when this is called.
@@ -144,6 +145,7 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
         # Once on_driver_reset is received, start up again.
 
     def on_driver_reset(self) -> None:
+        raise NotImplementedError()
         self._get_and_configure_voice()
 
         # Queue up any buffers that are still in queue but weren't deleted. This does not
@@ -166,7 +168,7 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
 
         self._write_cursor = self._sample_correction
         for audio_data in self._audio_data_in_use:
-            self._xa2_source_voice.submit_buffer(interface.create_xa2_buffer(audio_data))
+            self._xa2_source_voice.submit_audio_data(audio_data)
             self._write_cursor += audio_data.length
 
         if self._playing:
@@ -179,13 +181,12 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
             # Driver was deleted; just break up some references and return
             self.driver = None
             self._xa2_source_voice = None
-            self._audio_data_in_use.clear()
             return
 
         assert _debug("XAudio2: Player deleted, returning voice")
 
         self.stop()
-        self.driver._xa2_driver.return_voice(self._xa2_source_voice, self._audio_data_in_use)
+        self.driver._xa2_driver.return_voice(self._xa2_source_voice)
         self.driver = None
         self._xa2_source_voice = None
 
@@ -222,11 +223,8 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
         self._pyglet_source_exhausted = False
 
         if self._xa2_source_voice is not None:
-            self.driver._xa2_driver.return_voice(self._xa2_source_voice, self._audio_data_in_use)
-            self._audio_data_in_use = deque()
+            self.driver._xa2_driver.return_voice(self._xa2_source_voice)
             self._get_and_configure_voice()
-        else:
-            self._audio_data_in_use.clear()
 
     def _get_and_configure_voice(self) -> None:
         v = self.driver._xa2_driver.get_source_voice(self.source.audio_format, self)
@@ -246,12 +244,12 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
         # Called from the XAudio2 thread.
         # A buffer stopped being played by the voice, it should by all means be the first one
         with self._audio_data_lock:
-            assert self._audio_data_in_use
-            self._audio_data_in_use.popleft()
+            assert self._xa2_source_voice.audio_data_in_use
+            self._xa2_source_voice.audio_data_in_use.popleft()
             # This should cause the AudioData to lose all its references and be gc'd
 
-            if self._audio_data_in_use:
-                assert _debug(f"Buffer ended, others remain: {len(self._audio_data_in_use)=}")
+            if self._xa2_source_voice.audio_data_in_use:
+                assert _debug(f"Buffer ended, {len(self._xa2_source_voice.audio_data_in_use)} remaining")
                 return
 
             assert self._xa2_source_voice.buffers_queued == 0
@@ -280,13 +278,11 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
         if audio_data is None:
             assert _debug(f"XAudio2: Source is out of data")
             self._pyglet_source_exhausted = True
-            if not self._audio_data_in_use:
+            if not self._xa2_source_voice.audio_data_in_use:
                 MediaEvent('on_eos').sync_dispatch_to_player(self.player)
             return
 
-        xa2_buffer = interface.create_xa2_buffer(audio_data)
-        self._audio_data_in_use.append(audio_data)
-        self._xa2_source_voice.submit_buffer(xa2_buffer)
+        self._xa2_source_voice.submit_audio_data(audio_data)
         assert _debug(f"XAudio2: Submitted buffer of size {audio_data.length}B")
 
         self.append_events(self._write_cursor, audio_data.events)
@@ -319,7 +315,7 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
             # assert _debug(f"{remaining_bytes=}B (p@{self._play_cursor} w@{self._write_cursor})")
             return False
 
-        assert _debug(f"Getting more audio data, only {remaining_bytes}B remain")
+        assert _debug(f"Getting more audio data, only {remaining_bytes}B remain. {self._write_cursor=}, {self._play_cursor=}")
 
         missing_bytes = self._buffered_data_ideal_size - remaining_bytes
         self._refill(self.source.audio_format.align_ceil(missing_bytes))
