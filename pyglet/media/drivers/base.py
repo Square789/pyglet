@@ -238,8 +238,6 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         return self._raw_play_cursor_to_time(self.get_play_cursor()) + self.player.last_seek_time
 
     def _raw_play_cursor_to_time(self, cursor: int) -> float:
-        if cursor is None:
-            return None
         return self._to_perceived_play_cursor(cursor) / self.source.audio_format.bytes_per_second
 
     def _to_perceived_play_cursor(self, play_cursor) -> int:
@@ -349,8 +347,8 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         """
         Retrieve a packet of `AudioData` of the given size.
         """
-        audio_time = self._raw_play_cursor_to_time(audio_position)
-        desync_bytes, extreme_desync = self.get_audio_time_diff(audio_time)
+        time_ = None if audio_position is None else self._raw_play_cursor_to_time(audio_position)
+        desync_bytes, extreme_desync = self.get_audio_time_diff(time_)
 
         if desync_bytes == 0:
             return self._get_audio_data(requested_size)
