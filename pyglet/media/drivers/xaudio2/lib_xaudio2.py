@@ -257,7 +257,7 @@ class IXAudio2Voice(com.pInterface):
         ('SetEffectParameters',
          com.STDMETHOD(UINT32, c_void_p, UINT32, UINT32)),
         ('GetEffectParameters',
-         com.VOIDMETHOD(UINT32, POINTER(BOOL))),
+         com.STDMETHOD(UINT32, c_void_p, UINT32)),
         ('SetFilterParameters',
          com.STDMETHOD(POINTER(XAUDIO2_FILTER_PARAMETERS), UINT32)),
         ('GetFilterParameters',
