@@ -223,6 +223,8 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
         self._pyglet_source_exhausted = False
 
         if self._xa2_source_voice is not None:
+            # XAudio2 voices can't be cleared immediately.
+            # Swap it out for a new one instead of waiting for OnBufferEnd callbacks.
             self.driver._xa2_driver.return_voice(self._xa2_source_voice)
             self._get_and_configure_voice()
 
