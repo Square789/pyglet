@@ -626,9 +626,6 @@ class XAudio2Driver:
         self.lock = threading.Lock()
         self._engine_callback = XA2EngineCallback(self)
 
-        # A lock held when the audio driver is being swapped out or otherwise deleted.
-        self._driver_management_lock = threading.Lock()
-
         self._voice_pool_lock = threading.Lock()
 
         self._voices_emitting = []  # Contains all in-use source voices with an emitter.
@@ -639,17 +636,17 @@ class XAudio2Driver:
         self._x3d_handle = None
         self._dsp_settings = None
 
-        self._create_xa2()
+        try:
+            self._create_xa2()
+        except OSError:
+            self._dead = True
+            self._setup_fake_driver()
 
         if self.restart_on_error:
             audio_devices = get_audio_device_manager()
             if audio_devices:
                 assert _debug('Audio device instance found.')
                 audio_devices.push_handlers(self)
-
-                if audio_devices.get_default_output() is None:
-                    raise ImportError("No default audio device found, can not create driver.")
-
                 pyglet.clock.schedule_interval_soft(self._check_state, 0.5)
 
     def _iter_voices(self):
@@ -676,14 +673,12 @@ class XAudio2Driver:
             if self._xaudio2:
                 assert _debug("XAudio2Driver._check_state: shutting down")
 
-                with self._driver_management_lock:
-                    self._setup_fake_driver()
+                self._setup_fake_driver()
         else:
             if not self._xaudio2:
                 assert _debug("XAudio2Driver._check_state: recreating and resetting")
-                with self._driver_management_lock:
-                    self._create_xa2()
-                    self._recreate_voices()
+                self._create_xa2()
+                self._recreate_voices()
 
     def _setup_fake_driver(self):
         # Exchange all existing voices for fake voices.
@@ -754,7 +749,8 @@ class XAudio2Driver:
         try:
             lib.XAudio2Create(ctypes.byref(self._xaudio2), 0, self.processor)
         except OSError:
-            raise ImportError("XAudio2 driver could not be initialized.")
+            self._xaudio2 = None
+            raise
 
         if _debug:
             # Debug messages are found in Windows Event Viewer, you must enable event logging:
@@ -771,12 +767,17 @@ class XAudio2Driver:
 
         self._mvoice_details = lib.XAUDIO2_VOICE_DETAILS()
         self._master_voice = lib.IXAudio2MasteringVoice()
-        # TODO: If no audio device exists, this call is the first to fail.
-        # Possibly catch this and create a fake driver instead.
-        self._xaudio2.CreateMasteringVoice(byref(self._master_voice),
-                                           lib.XAUDIO2_DEFAULT_CHANNELS,
-                                           lib.XAUDIO2_DEFAULT_SAMPLERATE,
-                                           0, device_id, None, self.category)
+
+        try:
+            self._xaudio2.CreateMasteringVoice(byref(self._master_voice),
+                                               lib.XAUDIO2_DEFAULT_CHANNELS,
+                                               lib.XAUDIO2_DEFAULT_SAMPLERATE,
+                                               0, device_id, None, self.category)
+        except OSError:
+            self._xaudio2.Release()
+            self._xaudio2 = None
+            raise
+
         self._master_voice.GetVoiceDetails(byref(self._mvoice_details))
 
         self._listener = XAudio2Listener(self)
@@ -784,6 +785,22 @@ class XAudio2Driver:
 
         if self.allow_3d:
             self.enable_3d()
+
+    def enable_3d(self):
+        """Initializes the prerequisites for 3D positional audio and initializes with default DSP settings."""
+        channel_mask = DWORD()
+        self._master_voice.GetChannelMask(byref(channel_mask))
+
+        self._x3d_handle = lib.X3DAUDIO_HANDLE()
+        lib.X3DAudioInitialize(channel_mask.value, lib.X3DAUDIO_SPEED_OF_SOUND, self._x3d_handle)
+
+        matrix = (FLOAT * self._mvoice_details.InputChannels)()
+        self._dsp_settings = lib.X3DAUDIO_DSP_SETTINGS()
+        self._dsp_settings.SrcChannelCount = 1
+        self._dsp_settings.DstChannelCount = self._mvoice_details.InputChannels
+        self._dsp_settings.pMatrixCoefficients = matrix
+
+        pyglet.clock.schedule_interval_soft(self._calculate_3d_sources, 1 / 15.0)
 
     def _destroy_voices(self):
         """Destroy and clear all voice pools."""
@@ -825,22 +842,6 @@ class XAudio2Driver:
         self._xaudio2.StopEngine()
         self._xaudio2.Release()
         self._xaudio2 = None
-
-    def enable_3d(self):
-        """Initializes the prerequisites for 3D positional audio and initializes with default DSP settings."""
-        channel_mask = DWORD()
-        self._master_voice.GetChannelMask(byref(channel_mask))
-
-        self._x3d_handle = lib.X3DAUDIO_HANDLE()
-        lib.X3DAudioInitialize(channel_mask.value, lib.X3DAUDIO_SPEED_OF_SOUND, self._x3d_handle)
-
-        matrix = (FLOAT * self._mvoice_details.InputChannels)()
-        self._dsp_settings = lib.X3DAUDIO_DSP_SETTINGS()
-        self._dsp_settings.SrcChannelCount = 1
-        self._dsp_settings.DstChannelCount = self._mvoice_details.InputChannels
-        self._dsp_settings.pMatrixCoefficients = matrix
-
-        pyglet.clock.schedule_interval_soft(self._calculate_3d_sources, 1 / 15.0)
 
     @property
     def volume(self):
