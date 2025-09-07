@@ -843,17 +843,6 @@ class XAudio2Driver:
         self._xaudio2.Release()
         self._xaudio2 = None
 
-    @property
-    def volume(self):
-        vol = c_float()
-        self._master_voice.GetVolume(ctypes.byref(vol))
-        return vol.value
-
-    @volume.setter
-    def volume(self, value):
-        """Sets global volume of the master voice."""
-        self._master_voice.SetVolume(value, 0)
-
     def _calculate_3d_sources(self, dt):
         """We calculate the 3d emitters and sources every 15 fps, committing everything after deferring all changes."""
         for source_voice in self._voices_emitting:
