@@ -13,6 +13,7 @@ import pyglet
 from pyglet.libs.win32.types import *
 from pyglet.libs.win32.com import S_OK
 from pyglet.util import debug_print
+from pyglet.media.codecs.base import AudioFormat
 from pyglet.media.devices import get_audio_device_manager
 from pyglet.media.devices.base import DeviceFlow
 from pyglet.util import debug_print
@@ -242,14 +243,14 @@ class FakeXAudio2SourceVoice(FakeXAudio2Voice):
         if op_set == 0:
             self.start_impl(flags)
         else:
-            self._driver.fake_voice_start(self, op_set)
+            self._driver.fake_voice_start(self, op_set, flags)
         return S_OK
 
     def Stop(self, flags: int, op_set: int) -> int:
         if op_set == 0:
             self.stop_impl(flags)
         else:
-            self._driver.fake_voice_stop(self, op_set)
+            self._driver.fake_voice_stop(self, op_set, flags)
         return S_OK
 
     def SubmitSourceBuffer(self, buf_ptr, wma_buf_ptr) -> None:
@@ -268,7 +269,6 @@ class FakeXAudio2SourceVoice(FakeXAudio2Voice):
 
         # Buffer context never supplied by pyglet, ignore
         self._voice_state_struct.pCurrentBufferContext = None
-        # TODO self._buffers_queued?
         self._voice_state_struct.BuffersQueued = len(self.buffers)
         self._voice_state_struct.SamplesPlayed = self._samples_played
 
@@ -279,7 +279,11 @@ class FakeXAudio2SourceVoice(FakeXAudio2Voice):
                        ctypes.sizeof(self._voice_state_struct))
 
     def FlushSourceBuffers(self) -> int:
-        self._driver.fake_voice_flush(self)
+        with self._buffer_lock:
+            if self._active:
+                self._to_flush = 1
+            else:
+                self._to_flush = 0
         return S_OK
 
     def GetFrequencyRatio(self, fr_ptr) -> None:
@@ -309,6 +313,21 @@ class FakeXAudio2SourceVoice(FakeXAudio2Voice):
     def Discontinuity(self) -> int:
         raise NotImplementedError()
 
+    def flush_impl(self) -> None:
+        """Perform buffer flushing. May only be called from the FakeDriver run thread."""
+        with self._buffer_lock:
+            assert self._to_flush >= 0
+
+            while len(self.buffers) > self._to_flush:
+                self.buffers.pop(self._to_flush)
+                self._buffer_lock.release()
+                try:
+                    # NOTE: The userdata pointer is not used by pyglet, so we ignore it.
+                    self._callback.OnBufferEnd(None)
+                finally:
+                    self._buffer_lock.acquire()
+            self._to_flush = -1
+
     def start_impl(self, flags: int) -> None:
         self._active = True
 
@@ -326,6 +345,14 @@ class FakeXAudio2SourceVoice(FakeXAudio2Voice):
     def _update_frames_consumed_per_second(self) -> None:
         self._frames_consumed_per_second = decimal.Decimal(
             self._voice_details_struct.SampleRate * self._frequency_ratio)
+
+
+class _OperationSet:
+    __slots__ = ("change_play_state", "change_freq_ratio")
+
+    def __init__(self) -> None:
+        self.change_play_state = {}
+        self.change_freq_ratio = {}
 
 
 class _FakeDriver:
@@ -349,54 +376,33 @@ class _FakeDriver:
         self._thread = None
         self._last_processing_step_time = 0.0
         self._operation_sets = {}
-        self._committed_operation_sets = set()
+        self._committed_operation_sets = []
         self._operation_lock = threading.Lock()
 
     def CreateSourceVoice(self, *_, **__):
         raise NotImplementedError()
 
-    def CommitChanges(self, op_set: int) -> None:
+    def CommitChanges(self, op_set_id: int) -> None:
         with self._operation_lock:
-            self._committed_operation_sets.add(op_set)
+            if (set_ := self._operation_sets.pop(op_set_id, None)) is not None:
+                self._committed_operation_sets.append(set_)
 
-    def _create_operation_set(self, op_set: int) -> None:
-        if op_set not in self._operation_sets:
-            # TODO: Get rid of string literal keys
-            self._operation_sets[op_set] = {
-                "change_play_state": {},  # Start/Stop
-                "change_freq_ratio": {},  # SetFrequencyRatio
-                # "exit_loop": {}, # ExitLoop
-            }
-
-    def _process_operation_set(self, op_set: int) -> None:
-        self._create_operation_set(op_set)
-        set_ = self._operation_sets.pop(op_set)
-        for v, play_state in set_["change_play_state"].items():
-            if play_state:
-                v.start_impl()
-            else:
-                v.stop_impl()
-        for v, freq_ratio in set_["change_freq_ratio"].items():
-            v.set_frequency_ratio_impl(freq_ratio)
+    def _create_operation_set(self, op_set_id: int) -> _OperationSet:
+        if op_set_id not in self._operation_sets:
+            self._operation_sets[op_set_id] = _OperationSet()
+        return self._operation_sets[op_set_id]
 
     def fake_voice_set_frequency_ratio(self, voice: FakeXAudio2Voice, frequency_ratio: float, op_set: int) -> None:
-        self._create_operation_set(op_set)
-        self._operation_sets[op_set]["change_freq_ratio"][voice] = frequency_ratio
+        with self._operation_lock:
+            self._create_operation_set(op_set).change_freq_ratio[voice] = frequency_ratio
 
-    def fake_voice_start(self, voice: FakeXAudio2Voice, op_set: int) -> None:
-        self._create_operation_set(op_set)
-        self._operation_sets[op_set]["change_play_state"][voice] = True
+    def fake_voice_start(self, voice: FakeXAudio2Voice, op_set: int, flags: int) -> None:
+        with self._operation_lock:
+            self._create_operation_set(op_set).change_play_state[voice] = (True, flags)
 
-    def fake_voice_stop(self, voice: FakeXAudio2Voice, op_set: int) -> None:
-        self._create_operation_set(op_set)
-        self._operation_sets[op_set]["change_play_state"][voice] = False
-
-    def fake_voice_flush(self, voice: FakeXAudio2SourceVoice) -> None:
-        with voice._buffer_lock:
-            if voice._active:
-                voice._to_flush = 1
-            else:
-                voice._to_flush = 0
+    def fake_voice_stop(self, voice: FakeXAudio2Voice, op_set: int, flags: int) -> None:
+        with self._operation_lock:
+            self._create_operation_set(op_set).change_play_state[voice] = (False, flags)
 
     # NOTE: This method passes some higher python primitives and information in which removes
     # the fake driver's need of from having to handle loop info to pick up playback in the
@@ -455,10 +461,18 @@ class _FakeDriver:
         next_wake_time = perf_counter()
 
         while not self._exit_flag:
-            self._process_operation_set(0)
-
-            # Attempt to run every 10-20 ms like XAudio2
-            # NOTE: use pyglet clock for this?
+            with self._operation_lock:
+                # NOTE: OperationSet 0 is never created, its effects always apply instantly.
+                # If that wasn't the case, it'd probably need to be added into
+                # `_committed_operation_sets`` as well here.
+                for set_ in self._committed_operation_sets:
+                    for v, (play_state, flags) in set_.change_play_state.items():
+                        if play_state:
+                            v.start_impl(flags)
+                        else:
+                            v.stop_impl(flags)
+                    for v, freq_ratio in set_.change_freq_ratio.items():
+                        v.set_frequency_ratio_impl(freq_ratio)
 
             tstamp = perf_counter()
             tdiff = decimal.Decimal(tstamp - self._last_processing_step_time)
@@ -481,10 +495,7 @@ class _FakeDriver:
                     return
 
                 if v._to_flush >= 0:
-                    for _ in range(v._to_flush, len(v.buffers)):
-                        # TODO Locking?
-                        v.buffers.pop(v._to_flush)
-                        v._callback.OnBufferEnd(None)
+                    v.flush_impl()
 
                 if not v._active:
                     continue
@@ -517,7 +528,7 @@ class _FakeDriver:
                         v.buffers.pop(0)
                         v._current_buffer_offset = 0
 
-                        # TODO locking
+                        # TODO locking?
                         # Ignore OnBufferEnd userdata pointer.
                         # Ignore OnStreamEnd.
                         v._callback.OnBufferEnd(None)
@@ -693,7 +704,6 @@ class XAudio2Driver:
         # NOTE: Will wait on a thread. Probably not too serious.
         self._fake_driver.stop()
 
-        from pyglet.media.codecs.base import AudioFormat
         _debug(f"Recreating real voices {self._voice_pool} {self._voices_in_use}")
         with self._voice_pool_lock:
             # Flushing voices won't have OnBufferEnd callbacks called anymore.
@@ -709,7 +719,7 @@ class XAudio2Driver:
             # Playing voices need to be started now
             for voice, player in self._voices_in_use.items():
                 # TODO: remove passing in of audio format
-                voice.recreate_real_and_restart(player.source.audio_format, self)
+                voice.create_real_voice_and_restart(player.source.audio_format, self)
 
     def _create_xa2(self, device_id=None):
         self._xaudio2 = lib.IXAudio2()
@@ -953,7 +963,7 @@ class XAudio2Driver:
         else:
             voice = self._create_new_real_voice(audio_format, callback)
 
-        return XA2SourceVoice(voice, callback, buffer_lock, audio_format.channels, audio_format.sample_size)
+        return XA2SourceVoice(voice, callback, buffer_lock, audio_format)
 
     def _create_new_fake_voice(
         self,
@@ -994,7 +1004,7 @@ class XAudio2Driver:
 
 
 class XA2SourceVoice:
-    def __init__(self, voice, callback, buffer_lock, channel_count, sample_size):
+    def __init__(self, voice, callback, buffer_lock, audio_format: "AudioFormat") -> None:
         self._voice_state = lib.XAUDIO2_VOICE_STATE()  # Will be reused constantly.
         self._voice = voice
         self._callback = callback
@@ -1014,11 +1024,14 @@ class XA2SourceVoice:
         # total lifetime and the AudioData containing the buffer's data.
         self.audio_data_in_use = deque()
 
-        assert sample_size % 8 == 0
+        assert audio_format.sample_size % 8 == 0
 
-        self.channel_count = channel_count
-        self.sample_size = sample_size
-        self._bytes_per_frame = (sample_size // 8) * channel_count
+        self.channel_count = audio_format.channels
+        self.sample_size = audio_format.sample_size
+        self._bytes_per_frame = (audio_format.sample_size // 8) * audio_format.channels
+
+        # May be modified as the voice is acquired by different AudioPlayers.
+        self._sample_rate = audio_format.sample_rate
 
         # TODO: Since we now are lying about samples_played (not returning the true underlying
         # value), consider moving the samples_played_at_last_recycle business into it too.
@@ -1039,9 +1052,9 @@ class XA2SourceVoice:
 
         # If it's a mono source, then we can make it an emitter.
         # In the future, non-mono sources can be supported as well.
-        if channel_count == 1:
+        if audio_format.channels == 1:
             self._emitter = lib.X3DAUDIO_EMITTER()
-            self._emitter.ChannelCount = channel_count
+            self._emitter.ChannelCount = audio_format.channels
             self._emitter.CurveDistanceScaler = 1.0
 
             # Commented are already set by the Player class.
@@ -1073,6 +1086,7 @@ class XA2SourceVoice:
         """
         self._callback.on_buffer_end = on_buffer_end_cb
         self._voice.SetSourceSampleRate(sample_rate)
+        self._sample_rate = sample_rate
 
     @property
     def buffers_queued(self):
@@ -1234,31 +1248,20 @@ class XA2SourceVoice:
         # Driver is not playing at the time this method is called, but samples_played and
         # other voice state can still be queried.
 
-        vd = lib.XAUDIO2_VOICE_DETAILS()
-        # Reconstruct audio format
-        # TODO: Far more efficient if we stored some of this stuff on the voice
-        # also the import is a gross hack, works for now :TM:
-        self._voice.GetVoiceDetails(byref(vd))
-        from pyglet.media.codecs.base import AudioFormat
-        af = AudioFormat(self.channel_count, self.sample_size, vd.InputSampleRate)
+        af = AudioFormat(self.channel_count, self.sample_size, self._sample_rate)
         print("    ", af)
-
         # Blind replacing of actual XAudio voices is okay.
         # Deleting the true driver will still free them; no call to Release is necessary.
         self.phantom_samples_played = self.samples_played
         # TODO: Thread switch here can cause the higher AudioPlayer's play cursor to exceed write cursor!
-        __import__("time").sleep(0.5)
-        # NOTE: determination of "active" is rather poor, but should work for now
-        # TODO: nvm i'm stupid. This never worked!
-        # It's not possible to determine whether a voice is playing from XAudio2.
-        # We need to keep track of that ourselves.
+        # __import__("time").sleep(0.5)
         self._voice = driver._create_new_fake_voice(af,
                                                     self._callback,
                                                     self._buffer_lock,
                                                     self.audio_data_in_use,
                                                     self.phantom_samples_played,
                                                     self._absolute_submitted_frame_count,
-                                                    self in driver._voices_in_use)
+                                                    self._playing)
 
     def create_real_voice_and_restart(self, fmt, driver):
         """Restart the voice. Called after it has been recreated after a driver dropout.
@@ -1289,7 +1292,8 @@ class XA2SourceVoice:
         for i in range(1, len(self.audio_data_in_use)):
             self._voice.SubmitSourceBuffer(byref(create_xa2_buffer(self.audio_data_in_use[i][1])), None)
 
-        self.play()
+        if self._playing:
+            self._voice.Start(0, 0)
 
 
 class XAudio2Listener:
