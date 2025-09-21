@@ -370,10 +370,10 @@ class _FakeDriver:
     PROCESSING_INTERVAL = 0.01
 
     def __init__(self, driver) -> None:
-        self._exit_flag = False
         self._voices = []
         self._driver = driver
         self._thread = None
+        self._stop_event = None
         self._last_processing_step_time = 0.0
         self._operation_sets = {}
         self._committed_operation_sets = []
@@ -444,12 +444,12 @@ class _FakeDriver:
 
         self._voices = [v._voice for v in self._driver._iter_voices()]
 
-        self._exit_flag = False
+        self._stop_event = threading.Event()
         self._thread.start()
 
     def stop(self) -> None:
         if self._thread is not None:
-            self._exit_flag = True
+            self._stop_event.set()
             self._thread.join()
             self._thread = None
 
@@ -460,7 +460,7 @@ class _FakeDriver:
 
         next_wake_time = perf_counter()
 
-        while not self._exit_flag:
+        while True:
             with self._operation_lock:
                 # NOTE: OperationSet 0 is never created, its effects always apply instantly.
                 # If that wasn't the case, it'd probably need to be added into
@@ -490,9 +490,6 @@ class _FakeDriver:
             while vidx < len(self._voices):
                 v: FakeXAudio2SourceVoice = self._voices[vidx]
                 vidx += 1
-
-                if self._exit_flag:
-                    return
 
                 if v._to_flush >= 0:
                     v.flush_impl()
@@ -538,8 +535,8 @@ class _FakeDriver:
             self._driver._engine_callback.OnProcessingPassEnd()
 
             next_wake_time += self.PROCESSING_INTERVAL
-            slt = max(next_wake_time - perf_counter(), 0.0)
-            sleep(slt)
+            if self._stop_event.wait(timeout=max(next_wake_time - perf_counter(), 0.0)):
+                break
 
 
 class XA2EngineCallback(com.COMObject):
