@@ -522,12 +522,12 @@ class _FakeDriver:
 
                     if x < to_drain:
                         # Buffer exhausted
+                        # Lock is probably not needed here as `pop` will be atomic.
                         v.buffers.pop(0)
                         v._current_buffer_offset = 0
 
-                        # TODO locking?
                         # Ignore OnBufferEnd userdata pointer.
-                        # Ignore OnStreamEnd.
+                        # Ignore OnStreamEnd callback.
                         v._callback.OnBufferEnd(None)
 
                 # Ignore OnVoiceProcessingPassEnd
@@ -626,10 +626,10 @@ class XAudio2Driver:
 
         self._voice_pool_lock = threading.Lock()
 
-        self._voices_emitting = []  # Contains all in-use source voices with an emitter.
+        self._voices_emitting = []  # All in-use source voices with an emitter.
         self._voices_in_use = {}  # All voices currently in use, mapped to their audio player.
-        self._voice_pool = defaultdict(list)  # Maps voice keys to lists of voices ready to use.
-        self._voices_resetting = {}  # All resetting voices, mapped to their resetter.
+        self._voice_pool = defaultdict(list)  # Voice keys mapped to lists of voices ready to use.
+        self._voices_resetting = set()  # All voices in the process of resetting.
 
         self._x3d_handle = None
         self._dsp_settings = None
@@ -648,7 +648,7 @@ class XAudio2Driver:
                 pyglet.clock.schedule_interval_soft(self._check_state, 0.5)
 
     def _iter_voices(self):
-        yield from self._voices_resetting.keys()
+        yield from self._voices_resetting
         for pool in self._voice_pool.values():
             yield from pool
         yield from self._voices_in_use
@@ -692,13 +692,9 @@ class XAudio2Driver:
 
         self._fake_driver.start()
 
-    def _reset_resetting_voices(self):
-        for v in self._voices_resetting:
-            self._return_reset_voice(v)
-
     def _recreate_voices(self):
         _debug("Stopping fake driver")
-        # NOTE: Will wait on a thread. Probably not too serious.
+        # Will wait on a thread. Probably not too serious.
         self._fake_driver.stop()
 
         _debug(f"Recreating real voices {self._voice_pool} {self._voices_in_use}")
@@ -784,9 +780,8 @@ class XAudio2Driver:
                 voice.destroy()
             list_.clear()
 
-        for voice, resetter in self._voices_resetting.items():
+        for voice in self._voices_resetting:
             voice.destroy()
-            resetter.destroy()
         self._voices_resetting.clear()
 
         self._voices_emitting.clear()
@@ -868,6 +863,10 @@ class XAudio2Driver:
             # a voice is stopped and ready for getting repooled right here.
             self._return_reset_voice(voice)
 
+    def _reset_resetting_voices(self):
+        for v in self._voices_resetting:
+            self._return_reset_voice(v)
+
     def _return_reset_voice(self, voice) -> None:
         voice.audio_data_in_use.clear()
 
@@ -884,7 +883,7 @@ class XAudio2Driver:
         # However, this function is called either while _voice_pool_lock is held,
         # or from within an XAudio2 callback, where the global lock is held, where such
         # a swapout won't happen. It should be safe.
-        self._voices_resetting.pop(voice)
+        self._voices_resetting.remove(voice)
         self._voice_pool[voice_key].append(voice)
         assert _debug(f"XA2AudioDriver: {voice} back in pool")
 
@@ -897,7 +896,7 @@ class XAudio2Driver:
 
             assert _debug(f"XA2AudioDriver: Resetting {voice}...")
 
-            self._voices_resetting[voice] = None
+            self._voices_resetting.add(voice)
             if voice.buffers_queued != 0:
                 # If the audio thread ran right here and we would now be at zero buffers,
                 # the callback would never be invoked.
