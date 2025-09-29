@@ -624,11 +624,16 @@ class XAudio2Driver:
         self.lock = threading.Lock()
         self._engine_callback = XA2EngineCallback(self)
 
+        # A lock for the voice pools below.
+        # The lock's purpose is to prevent voices from being overlooked by the fake driver swapout
+        # functionality.
+        # This lock is not held onto in some places where voices are added to the pool, as
+        # those operations should be safe given bytecode-atomicity.
         self._voice_pool_lock = threading.Lock()
 
-        self._voices_emitting = []  # All in-use source voices with an emitter.
+        self._voice_pool = defaultdict(list)  # Voice keys mapped to lists of voices ready for use.
         self._voices_in_use = {}  # All voices currently in use, mapped to their audio player.
-        self._voice_pool = defaultdict(list)  # Voice keys mapped to lists of voices ready to use.
+        self._voices_emitting = []  # All in-use source voices with an emitter.
         self._voices_resetting = set()  # All voices in the process of resetting.
 
         self._x3d_handle = None
@@ -697,6 +702,8 @@ class XAudio2Driver:
         # Will wait on a thread. Probably not too serious.
         self._fake_driver.stop()
 
+        # TODO: There's two definitions of voices. Pull through on the "voice gate" rebrand
+        # one or merge it into the player; this interface file does way too much anyways.
         _debug(f"Recreating real voices {self._voice_pool} {self._voices_in_use}")
         with self._voice_pool_lock:
             # Flushing voices won't have OnBufferEnd callbacks called anymore.
@@ -704,15 +711,15 @@ class XAudio2Driver:
             # voices should be good then.
             self._reset_resetting_voices()
 
-            for (channel_count, sample_size), list_ in self._voice_pool.items():
+            # Replace voices on pooled voice gates
+            for list_ in self._voice_pool.values():
                 for voice in list_:
                     voice.phantom_samples_played = voice.samples_played
-                    voice._voice = self._create_new_real_voice(AudioFormat(channel_count, sample_size, 44100), voice._callback)
+                    voice._voice = self._create_new_real_voice(voice._audio_format, voice._callback)
 
             # Playing voices need to be started now
-            for voice, player in self._voices_in_use.items():
-                # TODO: remove passing in of audio format
-                voice.create_real_voice_and_restart(player.source.audio_format, self)
+            for voice in self._voices_in_use.keys():
+                voice.create_real_voice_and_restart(self)
 
     def _create_xa2(self, device_id=None):
         self._xaudio2 = lib.IXAudio2()
@@ -874,17 +881,14 @@ class XAudio2Driver:
         voice._callback.on_buffer_end = None
         voice.samples_played_at_last_recycle = samples_played
         voice._absolute_submitted_frame_count = samples_played
-
-        voice_key = (voice.channel_count, voice.sample_size)
-
-        # Another thread may theoretically interfere right here.
+        # Another thread may theoretically interfere here.
         # The worst outcome of that would be the voice getting overlooked during a driver
         # swapout.
         # However, this function is called either while _voice_pool_lock is held,
-        # or from within an XAudio2 callback, where the global lock is held, where such
-        # a swapout won't happen. It should be safe.
+        # or from within an XAudio2 callback, where such a swapout won't happen.
+        # It should be safe.
         self._voices_resetting.remove(voice)
-        self._voice_pool[voice_key].append(voice)
+        self._voice_pool[voice.pool_key].append(voice)
         assert _debug(f"XA2AudioDriver: {voice} back in pool")
 
     def return_voice(self, voice: "XA2SourceVoice"):
@@ -910,7 +914,7 @@ class XAudio2Driver:
                     #    I believe callbacks from native code can be paused in favor of other threads)
                     # C: Maybe the python callback will run soon.
                     # D: Maybe the python callback will never run.
-                    # As D is a possibility, grab the engine lock to ensure it's not B and return the voice
+                    # D is a possibility, grab the engine lock to ensure it's not B and return the voice
                     # if it wasn't already.
                     with self.lock:
                         if voice in self._voices_resetting:
@@ -1022,12 +1026,11 @@ class XA2SourceVoice:
 
         assert audio_format.sample_size % 8 == 0
 
-        self.channel_count = audio_format.channels
-        self.sample_size = audio_format.sample_size
-        self._bytes_per_frame = (audio_format.sample_size // 8) * audio_format.channels
+        self.pool_key = (audio_format.channels, audio_format.sample_size)
 
-        # May be modified as the voice is acquired by different AudioPlayers.
-        self._sample_rate = audio_format.sample_rate
+        # Create a copy; this format's sample_rate value may be modified as the voice is acquired
+        # by different AudioPlayers.
+        self._audio_format = AudioFormat(audio_format.channels, audio_format.sample_size, audio_format.sample_rate)
 
         # TODO: Since we now are lying about samples_played (not returning the true underlying
         # value), consider moving the samples_played_at_last_recycle business into it too.
@@ -1077,12 +1080,14 @@ class XA2SourceVoice:
         self._callback = None
 
     def acquired(self, on_buffer_end_cb, sample_rate):
-        """A voice has been acquired. Set the callback as well as its new sample
-        rate.
+        """This voice has been handed out to a player.
+        Set the callback as well as its new sample rate.
         """
         self._callback.on_buffer_end = on_buffer_end_cb
+
         self._voice.SetSourceSampleRate(sample_rate)
-        self._sample_rate = sample_rate
+        self._audio_format.sample_rate = sample_rate
+        self._audio_format.bytes_per_second = self._audio_format.bytes_per_frame * sample_rate
 
     @property
     def buffers_queued(self):
@@ -1237,21 +1242,20 @@ class XA2SourceVoice:
 
         with self._buffer_lock:
             self.audio_data_in_use.append((self._absolute_submitted_frame_count, audio_data))
-            self._absolute_submitted_frame_count += audio_data.length // self._bytes_per_frame
+            self._absolute_submitted_frame_count += audio_data.length // self._audio_format.bytes_per_frame
             self._voice.SubmitSourceBuffer(byref(xa2_buf), None)
 
     def create_fake_voice(self, driver):
         # Driver is not playing at the time this method is called, but samples_played and
         # other voice state can still be queried.
 
-        af = AudioFormat(self.channel_count, self.sample_size, self._sample_rate)
-        print("    ", af)
+        print("    ", self._audio_format)
         # Blind replacing of actual XAudio voices is okay.
         # Deleting the true driver will still free them; no call to Release is necessary.
         self.phantom_samples_played = self.samples_played
         # TODO: Thread switch here can cause the higher AudioPlayer's play cursor to exceed write cursor!
         # __import__("time").sleep(0.5)
-        self._voice = driver._create_new_fake_voice(af,
+        self._voice = driver._create_new_fake_voice(self._audio_format,
                                                     self._callback,
                                                     self._buffer_lock,
                                                     self.audio_data_in_use,
@@ -1259,11 +1263,12 @@ class XA2SourceVoice:
                                                     self._absolute_submitted_frame_count,
                                                     self._playing)
 
-    def create_real_voice_and_restart(self, fmt, driver):
+    def create_real_voice_and_restart(self, driver):
         """Restart the voice. Called after it has been recreated after a driver dropout.
         """
         self.phantom_samples_played = self.samples_played
-        self._voice = driver._create_new_real_voice(fmt, self._callback)
+
+        self._voice = driver._create_new_real_voice(self._audio_format, self._callback)
 
         if not self.audio_data_in_use:
             return
@@ -1271,7 +1276,7 @@ class XA2SourceVoice:
         if self.audio_data_in_use:
             # Attempt to submit the first buffer with a PlayBegin value so that it starts out at samples_played.
             first_buf_start, ad = self.audio_data_in_use[0]
-            frames = ad.length // self._bytes_per_frame
+            frames = ad.length // self._audio_format.bytes_per_frame
 
             ideal_start = self.phantom_samples_played - first_buf_start
             if ideal_start >= frames:
