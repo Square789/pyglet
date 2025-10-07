@@ -132,33 +132,6 @@ class FakeXAudio2Voice:
         pass
 
 
-class FakeXAudio2MasteringVoice(FakeXAudio2Voice):
-    """
-    Mimic the XAudio2 MasteringVoice interface.
-    """
-    def __init__(
-        self,
-        driver: _FakeDriver,
-        flags,
-        effect_chain,
-        input_channels: int,
-        input_sample_rate: int,
-        device_id,
-        stream_category: int,
-    ) -> None:
-        super().__init__(driver, flags, effect_chain)
-
-        # Since no audio is ever played, these values work fine to fake a setup.
-        # TODO: Take the original master voice's details.
-        # If there is none, bad luck. I guess go with 44100?
-        self._voice_details_struct.InputChannels = 1
-        self._voice_details_struct.SampleRate = 44100
-
-    def GetChannelMask(self, channel_mask_ptr) -> int:
-        # TODO
-        raise NotImplementedError()
-
-
 class FakeXAudio2Buffer:
     __slots__ = ("length", "pointer", "absolute_start", "active")
 
