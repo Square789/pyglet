@@ -128,7 +128,10 @@ class FakeXAudio2Voice:
         raise NotImplementedError()
 
     def DestroyVoice(self) -> None:
-        # TODO: This method takes over the processing lock
+        # Ignored, pyglet only destroys voices at interpreter exit, at which point
+        # controlled destruction is pointless.
+        # If this were to be implemented, an additional lock would need to be created
+        # that protects the fake driver's `_voices` array.
         pass
 
 
@@ -353,7 +356,7 @@ class _FakeDriver:
         self._operation_lock = threading.Lock()
 
     def CreateSourceVoice(self, *_, **__):
-        raise NotImplementedError()
+        raise NotImplementedError("Create sources on the fake driver via create_source_voice")
 
     def CommitChanges(self, op_set_id: int) -> None:
         with self._operation_lock:
@@ -577,10 +580,10 @@ class XAudio2Driver:
         """
         assert _debug('Constructing XAudio2Driver')
         self._pyglet_driver = pyglet_driver
-        self._fake_driver = _FakeDriver(self)
 
         self._listener = None
         self._xaudio2 = None
+        self._fake_driver = _FakeDriver(self)
         self._dead = False
         self._time_of_death = 0.0
         self._last_processing_step_time = 0.0
@@ -683,16 +686,15 @@ class XAudio2Driver:
             # Flush them instantly here to update the voice gates, plugging in new
             # voices should be good then.
             self._reset_resetting_voices()
+            assert not self._voices_resetting
 
-            # Replace voices on pooled voice gates
             for list_ in self._voice_pool.values():
                 for voice in list_:
-                    voice.phantom_samples_played = voice.samples_played
-                    voice._voice = self._create_new_real_voice(voice._audio_format, voice._callback)
+                    voice.create_real_voice(self)
 
-            # Playing voices need to be started now
             for voice in self._voices_in_use.keys():
-                voice.create_real_voice_and_restart(self)
+                voice.create_real_voice(self)
+                voice.resubmit_and_restart(self)
 
     def _create_xa2(self, device_id=None):
         self._xaudio2 = lib.IXAudio2()
@@ -859,7 +861,7 @@ class XAudio2Driver:
         # swapout.
         # However, this function is called either while _voice_pool_lock is held,
         # or from within an XAudio2 callback, where such a swapout won't happen.
-        # It should be safe.
+        # It should be safe, so skip the lock acquisition.
         self._voices_resetting.remove(voice)
         self._voice_pool[voice.pool_key].append(voice)
         assert _debug(f"XA2AudioDriver: {voice} back in pool")
@@ -1236,12 +1238,15 @@ class XA2SourceVoice:
                                                     self._absolute_submitted_frame_count,
                                                     self._playing)
 
-    def create_real_voice_and_restart(self, driver):
+    def create_real_voice(self, driver):
+        self.phantom_samples_played = self.samples_played
+        self._voice = driver._create_new_real_voice(self._audio_format, self._callback)
+
+    def resubmit_and_restart(self, driver):
         """Restart the voice. Called after it has been recreated after a driver dropout.
         """
-        self.phantom_samples_played = self.samples_played
 
-        self._voice = driver._create_new_real_voice(self._audio_format, self._callback)
+        self.create_real_voice(driver)
 
         if not self.audio_data_in_use:
             return
