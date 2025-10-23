@@ -161,7 +161,6 @@ class FakeXAudio2SourceVoice(FakeXAudio2Voice):
         initial_audio_data,
         initial_frames_played: int,
         absolute_submitted_frame_count: int,
-        active: bool,
         flags,
         wave_format_ptr,
         effect_chain,
@@ -173,7 +172,7 @@ class FakeXAudio2SourceVoice(FakeXAudio2Voice):
         super().__init__(driver, flags, effect_chain)
         # Flags XAUDIO2_VOICE_{NOPITCH,NOSRC,USEFILTER} are unused by pyglet and ignored.
 
-        self._active = active
+        self._active = False
 
         # If set to a value >= 0, flush all buffers above this index on next processing pass.
         self._to_flush = -1
@@ -380,16 +379,15 @@ class _FakeDriver:
         with self._operation_lock:
             self._create_operation_set(op_set).change_play_state[voice] = (False, flags)
 
-    # NOTE: This method passes some higher python primitives and information in which removes
+    # NOTE: This method passes some higher python primitives and information. This removes
     # the fake driver's need of from having to handle loop info to pick up playback in the
-    # middle of a buffer.
+    # middle of a buffer, at the cost of a deviating voice creation method.
     # TODO: It also sucks, simplify in the future.
     def create_source_voice(
         self,
         initial_audio_data,
         initial_samples_played,
         absolute_submitted_frame_count,
-        active,
         buffer_lock,
         wave_format_ptr,
         flags,
@@ -402,7 +400,6 @@ class _FakeDriver:
                                    initial_audio_data,
                                    initial_samples_played,
                                    absolute_submitted_frame_count,
-                                   active,
                                    flags,
                                    wave_format_ptr,
                                    effect_chain,
@@ -440,7 +437,7 @@ class _FakeDriver:
             with self._operation_lock:
                 # NOTE: OperationSet 0 is never created, its effects always apply instantly.
                 # If that wasn't the case, it'd probably need to be added into
-                # `_committed_operation_sets`` as well here.
+                # `_committed_operation_sets` as well here.
                 for set_ in self._committed_operation_sets:
                     for v, (play_state, flags) in set_.change_play_state.items():
                         if play_state:
@@ -694,7 +691,6 @@ class XAudio2Driver:
 
             for voice in self._voices_in_use.keys():
                 voice.create_real_voice(self)
-                voice.resubmit_and_restart(self)
 
     def _create_xa2(self, device_id=None):
         self._xaudio2 = lib.IXAudio2()
@@ -850,18 +846,17 @@ class XAudio2Driver:
             self._return_reset_voice(v)
 
     def _return_reset_voice(self, voice) -> None:
+        # Another thread can interfere here.
+        # This might lead to the voice getting overlooked during a driver swapout or to inconsistencies in
+        # some of its attributes.
+        # However, this function is called either while _voice_pool_lock is held, or from within an
+        # XAudio2 callback, where a swapout won't happen.
         voice.audio_data_in_use.clear()
 
         samples_played = voice.samples_played
         voice._callback.on_buffer_end = None
         voice.samples_played_at_last_recycle = samples_played
         voice._absolute_submitted_frame_count = samples_played
-        # Another thread may theoretically interfere here.
-        # The worst outcome of that would be the voice getting overlooked during a driver
-        # swapout.
-        # However, this function is called either while _voice_pool_lock is held,
-        # or from within an XAudio2 callback, where such a swapout won't happen.
-        # It should be safe, so skip the lock acquisition.
         self._voices_resetting.remove(voice)
         self._voice_pool[voice.pool_key].append(voice)
         assert _debug(f"XA2AudioDriver: {voice} back in pool")
@@ -924,8 +919,6 @@ class XAudio2Driver:
             else:
                 voice = self._voice_pool[voice_key].pop()
 
-        assert voice.buffers_queued == 0
-
         return voice
 
     def _create_new_voice(self, audio_format):
@@ -948,14 +941,12 @@ class XAudio2Driver:
         initial_audio_data = (),
         initial_samples_played = 0,
         absolute_submitted_frame_count = 0,
-        active = False,
     ):
         wfx = create_xa2_waveformat(audio_format)
         return self._fake_driver.create_source_voice(
             initial_audio_data,
             initial_samples_played,
             absolute_submitted_frame_count,
-            active,
             buffer_lock,
             byref(wfx),
             0,
@@ -989,7 +980,9 @@ class XA2SourceVoice:
         # This lock is shared by a fake voice as well.
         self._buffer_lock = buffer_lock
 
-        # Another lock to protect against some data races
+        # The issue with transferring data out of fake/real voices and swapping them out with
+        # each other is that these transfers must be atomic.
+        # This lock protects against some data races in that regard.
         self._lock = threading.Lock()
 
         self._playing = False
@@ -1012,7 +1005,7 @@ class XA2SourceVoice:
 
         # Samples played by underlying voices that have been replaced since but still
         # need to be cheated into the `samples_played` calculation.
-        self.phantom_samples_played = 0
+        self._phantom_samples_played = 0
 
         # How many samples the voice had played when it was most recently readded into the
         # pool of available voices.
@@ -1021,7 +1014,7 @@ class XA2SourceVoice:
         # How many samples have been buffered on this voice throughout its lifetime.
         # This number is used to give each submitted buffer its absolute start position with
         # respect to `samples_played`.
-        # Note that if this voice is reset, this number is reduced to `samples_played`.
+        # Note that if the voice is reset, this number is lowered to `samples_played`.
         self._absolute_submitted_frame_count = 0
 
         # If it's a mono source, then we can make it an emitter.
@@ -1067,16 +1060,18 @@ class XA2SourceVoice:
     @property
     def buffers_queued(self):
         """Get the amount of buffers in the current voice. Adding flag for no samples played is 3x faster."""
-        self._voice.GetState(byref(self._voice_state), lib.XAUDIO2_VOICE_NOSAMPLESPLAYED)
-        # _debug(f"XA2SourceVoice.buffers_queued: {self._voice_state.BuffersQueued}")
-        return self._voice_state.BuffersQueued
+        with self._lock:
+            self._voice.GetState(byref(self._voice_state), lib.XAUDIO2_VOICE_NOSAMPLESPLAYED)
+            # _debug(f"XA2SourceVoice.buffers_queued: {self._voice_state.BuffersQueued}")
+            return self._voice_state.BuffersQueued
 
     @property
     def samples_played(self):
         """Get the amount of samples played by the voice."""
-        self._voice.GetState(byref(self._voice_state), 0)
-        # _debug(f"XA2SourceVoice.samples_played: {self._voice_state.SamplesPlayed + self.phantom_samples_played} ({perf_counter()})")
-        return self._voice_state.SamplesPlayed + self.phantom_samples_played
+        with self._lock:
+            self._voice.GetState(byref(self._voice_state), 0)
+            # _debug(f"XA2SourceVoice.samples_played: {self._voice_state.SamplesPlayed + self._phantom_samples_played} ({perf_counter()})")
+            return self._voice_state.SamplesPlayed + self._phantom_samples_played
 
     @property
     def volume(self):
@@ -1200,12 +1195,14 @@ class XA2SourceVoice:
         self._voice.FlushSourceBuffers()
 
     def play(self):
-        self._voice.Start(0, 0)
-        self._playing = True
+        with self._lock:
+            self._voice.Start(0, 0)
+            self._playing = True
 
     def stop(self):
-        self._voice.Stop(0, 0)
-        self._playing = False
+        with self._lock:
+            self._voice.Stop(0, 0)
+            self._playing = False
 
     def submit_audio_data(self, audio_data):
         """Submit a piece of AudioData to the voice by creating a XAUDIO2_BUFFER from its pointer.
@@ -1220,59 +1217,72 @@ class XA2SourceVoice:
             self._absolute_submitted_frame_count += audio_data.length // self._audio_format.bytes_per_frame
             self._voice.SubmitSourceBuffer(byref(xa2_buf), None)
 
-    def create_fake_voice(self, driver):
-        # Driver is not playing at the time this method is called, but samples_played and
-        # other voice state can still be queried.
+    def _replace_voice(self, driver, create_real_voice):
+        """
+        Replace the currently installed voice after updating the
+        `_phantom_samples_played` variable.
+        """
+        # This method may only be called at a very specific point where the XAudio2 engine
+        # is not active.
 
-        print("    ", self._audio_format)
-        # Blind replacing of actual XAudio voices is okay.
-        # Deleting the true driver will still free them; no call to Release is necessary.
-        self.phantom_samples_played = self.samples_played
-        # TODO: Thread switch here can cause the higher AudioPlayer's play cursor to exceed write cursor!
-        # __import__("time").sleep(0.5)
-        self._voice = driver._create_new_fake_voice(self._audio_format,
-                                                    self._callback,
-                                                    self._buffer_lock,
-                                                    self.audio_data_in_use,
-                                                    self.phantom_samples_played,
-                                                    self._absolute_submitted_frame_count,
-                                                    self._playing)
+        # The real voice can be created before lock acquisition, it might be better to reduce
+        # time spent in locks when creating foreign objects.
+        new_voice = None
+        if create_real_voice:
+            new_voice = driver._create_new_real_voice(self._audio_format, self._callback)
+
+        # Creating the new voice requires requeueing of all audio until now.
+        # We cannot allow other threads to interfere there, so perform some very broad
+        # locking.
+
+        with self._lock:
+            # Driver already may have errored out at the time this method is called, but
+            # samples_played and other voice state can still be queried.
+            self._voice.GetState(byref(self._voice_state), 0)
+            self._phantom_samples_played += self._voice_state.SamplesPlayed
+
+            with self._buffer_lock:
+                if not create_real_voice:
+                    # We need to grab the buffer lock, as a mutation of `audio_data_in_use` can
+                    # cause unexpected problems in `FakeXAudio2Voice.__init__`.
+                    new_voice = driver._create_new_fake_voice(self._audio_format,
+                                                              self._callback,
+                                                              self._buffer_lock,
+                                                              self.audio_data_in_use,
+                                                              self._phantom_samples_played,
+                                                              self._absolute_submitted_frame_count)
+
+                # Blind replacement of real voices is okay: The true driver will still
+                # free them; no call to Release is necessary.
+                # Blind replacement of fake voices is okay as well, they'll be garbage collected.
+                self._voice = new_voice
+
+                if create_real_voice and self.audio_data_in_use:
+                    # Submit the first buffer with a PlayBegin value so that it starts out at samples_played.
+                    first_buf_start, ad = self.audio_data_in_use[0]
+                    frames = ad.length // self._audio_format.bytes_per_frame
+
+                    ideal_start = self._phantom_samples_played - first_buf_start
+                    if ideal_start >= frames:
+                        _debug(f"FIXME First buffer is exhausted already? {ideal_start=} {frames=}")
+                    elif ideal_start < 0:
+                        _debug(f"ideal_start was negative? {ideal_start=} {frames=}")
+                    else:
+                        buf = create_xa2_buffer(ad)
+                        buf.PlayBegin = ideal_start
+                        self._voice.SubmitSourceBuffer(byref(buf), None)
+
+                    for i in range(1, len(self.audio_data_in_use)):
+                        self._voice.SubmitSourceBuffer(byref(create_xa2_buffer(self.audio_data_in_use[i][1])), None)
+
+            if self._playing:
+                self._voice.Start(0, 0)
+
+    def create_fake_voice(self, driver):
+        self._replace_voice(driver, False)
 
     def create_real_voice(self, driver):
-        self.phantom_samples_played = self.samples_played
-        self._voice = driver._create_new_real_voice(self._audio_format, self._callback)
-
-    def resubmit_and_restart(self, driver):
-        """Restart the voice. Called after it has been recreated after a driver dropout.
-        """
-
-        self.create_real_voice(driver)
-
-        if not self.audio_data_in_use:
-            return
-
-        if self.audio_data_in_use:
-            # Attempt to submit the first buffer with a PlayBegin value so that it starts out at samples_played.
-            first_buf_start, ad = self.audio_data_in_use[0]
-            frames = ad.length // self._audio_format.bytes_per_frame
-
-            ideal_start = self.phantom_samples_played - first_buf_start
-            if ideal_start >= frames:
-                # First buffer is already played? shouldn't really happen
-                # TODO might happen when threading and flushing go wrong
-                _debug(f"FIXME First buffer is exhausted already? {ideal_start=} {frames=}")
-            elif ideal_start < 0:
-                _debug(f"ideal_start was negative? {ideal_start=} {frames=}")
-            else:
-                buf = create_xa2_buffer(ad)
-                buf.PlayBegin = ideal_start
-                self._voice.SubmitSourceBuffer(byref(buf), None)
-
-        for i in range(1, len(self.audio_data_in_use)):
-            self._voice.SubmitSourceBuffer(byref(create_xa2_buffer(self.audio_data_in_use[i][1])), None)
-
-        if self._playing:
-            self._voice.Start(0, 0)
+        self._replace_voice(driver, True)
 
 
 class XAudio2Listener:
