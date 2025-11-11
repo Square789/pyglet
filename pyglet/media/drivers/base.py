@@ -146,14 +146,6 @@ class AbstractAudioPlayer(metaclass=ABCMeta):
         # Negative when data was skipped, positive if it was padded in.
         self._compensated_bytes = 0
 
-    def on_driver_destroy(self) -> None:
-        """Called before the audio driver is going to be destroyed (a planned destroy)."""
-        pass
-
-    def on_driver_reset(self) -> None:
-        """Called after the audio driver has been re-initialized."""
-        pass
-
     def set_source(self, source: Source) -> None:
         """Change the player's source for a new one.
         It must be of the same audio format.

@@ -127,54 +127,6 @@ class XAudio2AudioPlayer(AbstractAudioPlayer):
 
         self._xa2_source_voice = self.driver._xa2_driver.get_source_voice(source.audio_format, self)
 
-    def on_driver_destroy(self) -> None:
-        return
-        # This is called by an event, so likely not in an application's update.
-        # We don't assume threading clashes with play/pause etc, and the worker thread is taken
-        # care of below. Expecting XAudio to not make processing callbacks when this is called.
-        self.driver.worker.remove(self)
-
-        self._sample_correction = self._play_cursor
-
-        assert _debug(f"Xaudio2AudioPlayer: Driver about to be destroyed, cheating play cursor by "
-                      f"{self._sample_correction}")
-
-        # No need returning the voice, driver will delete it anyways
-        self._xa2_source_voice = None
-        # Put the player into a limbo state where it holds onto its data without a voice
-        # Once on_driver_reset is received, start up again.
-
-    def on_driver_reset(self) -> None:
-        raise NotImplementedError()
-        self._get_and_configure_voice()
-
-        # Queue up any buffers that are still in queue but weren't deleted. This does not
-        # pickup where the last sample played, only where the last buffer was submitted.
-        # As such, audio will be replayed.
-        # Audio resyncing will take effect once new data is read.
-        initial_wc = self._write_cursor - sum(d.length for d in self._audio_data_in_use)
-        pc_advance = self._sample_correction - initial_wc
-
-        # Resubmitting blindly will cause the player to fall behind as it replays
-        # already heard samples.
-        # Trim those samples off here. Might still end up inaccurate, but it's the best we can do.
-        while self._audio_data_in_use and pc_advance > 0:
-            audio_data = self._audio_data_in_use.popleft()
-            if audio_data.length > pc_advance:
-                self._audio_data_in_use.appendleft(audio_data.copy_chunk(pc_advance))
-                pc_advance = 0
-            else:
-                pc_advance -= audio_data.length
-
-        self._write_cursor = self._sample_correction
-        for audio_data in self._audio_data_in_use:
-            self._xa2_source_voice.submit_audio_data(audio_data)
-            self._write_cursor += audio_data.length
-
-        if self._playing:
-            self._xa2_source_voice.play()
-            self.driver.worker.add(self)
-
     def delete(self) -> None:
         if self._xa2_source_voice is None or self.driver._xa2_driver is None:
             assert _debug("Xaudio2: Player deleted, driver or voice is gone")
